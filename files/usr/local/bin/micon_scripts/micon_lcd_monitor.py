@@ -58,8 +58,8 @@ STATE_HEALTHY = 0
 STATE_REBUILDING = 1
 STATE_ALERT = 2
 
-# Hardware mapping of TS5800D physical slots: (Disk Number 1-8, PCI SATA path, Bit Index 0-7)
-BAYS = [
+# Hardware mapping of physical slots: (Disk Number 1-8, PCI SATA path, Bit Index 0-7)
+ALL_BAYS = [
     (1, "pci-0000:00:1f.2-ata-1", 0),  # Disk 1
     (2, "pci-0000:00:1f.2-ata-2", 1),  # Disk 2
     (3, "pci-0000:00:1f.2-ata-3", 2),  # Disk 3
@@ -69,6 +69,20 @@ BAYS = [
     (7, "pci-0000:01:00.0-ata-1", 6),  # Disk 7
     (8, "pci-0000:01:00.0-ata-2", 7),  # Disk 8
 ]
+
+def get_detected_bays():
+    """Detect number of physical SATA ports on chassis (e.g. 2, 4, 6, 8 bays)."""
+    try:
+        ports = len(os.listdir("/sys/class/ata_port"))
+        if ports in [2, 4, 6, 8]:
+            return ALL_BAYS[:ports]
+        elif ports > 0:
+            return ALL_BAYS[:min(ports, 8)]
+    except Exception:
+        pass
+    return ALL_BAYS
+
+BAYS = get_detected_bays()
 
 # System Identification (cached at startup)
 try:
@@ -316,8 +330,10 @@ def compute_sata_led_masks(pool_name="storage"):
     for disk_num, p_id, bit in BAYS:
         link_path = f"/dev/disk/by-path/{p_id}"
         if not os.path.islink(link_path):
-            # Physical bay is empty or disk unseated -> RED ON
-            red_on |= (1 << bit)
+            # Physical bay is empty: only turn on RED LED if an active array is degraded
+            is_degraded = ("[_" in md_raw) or any(x in zfs_raw for x in ["FAULTED", "DEGRADED", "UNAVAIL", "OFFLINE", "REMOVED"])
+            if is_degraded:
+                red_on |= (1 << bit)
             continue
 
         dev_name = os.path.basename(os.path.realpath(link_path))

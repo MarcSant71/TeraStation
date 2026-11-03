@@ -27,6 +27,12 @@ fi
 
 POOL_NAME="storage"
 
+# Auto-detect number of physical ATA ports on chassis (2, 4, 6 or 8 bays)
+TOTAL_BAYS=$(ls -d /sys/class/ata_port/ata* 2>/dev/null | wc -l)
+if [ -z "$TOTAL_BAYS" ] || [ "$TOTAL_BAYS" -le 0 ]; then
+    TOTAL_BAYS=8
+fi
+
 declare -A DISK_MAP
 DISK_MAP["pci-0000:00:1f.2-ata-1"]="Disk 1"
 DISK_MAP["pci-0000:00:1f.2-ata-2"]="Disk 2"
@@ -37,7 +43,7 @@ DISK_MAP["pci-0000:00:1f.2-ata-6"]="Disk 6"
 DISK_MAP["pci-0000:01:00.0-ata-1"]="Disk 7"
 DISK_MAP["pci-0000:01:00.0-ata-2"]="Disk 8"
 
-sorted_bays=(
+all_bays=(
     "pci-0000:00:1f.2-ata-1"
     "pci-0000:00:1f.2-ata-2"
     "pci-0000:00:1f.2-ata-3"
@@ -47,6 +53,8 @@ sorted_bays=(
     "pci-0000:01:00.0-ata-1"
     "pci-0000:01:00.0-ata-2"
 )
+
+sorted_bays=("${all_bays[@]:0:$TOTAL_BAYS}")
 
 get_disk_for_dev() {
     local target="$1"

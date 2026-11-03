@@ -22,6 +22,12 @@ NC='\033[0m' # No Color
 
 POOL_NAME="storage"
 
+# Auto-detect number of physical ATA ports on chassis (2, 4, 6 or 8 bays)
+TOTAL_BAYS=$(ls -d /sys/class/ata_port/ata* 2>/dev/null | wc -l)
+if [ -z "$TOTAL_BAYS" ] || [ "$TOTAL_BAYS" -le 0 ]; then
+    TOTAL_BAYS=8
+fi
+
 declare -A DISK_MAP
 DISK_MAP["pci-0000:00:1f.2-ata-1"]="Disk 1"
 DISK_MAP["pci-0000:00:1f.2-ata-2"]="Disk 2"
@@ -32,7 +38,7 @@ DISK_MAP["pci-0000:00:1f.2-ata-6"]="Disk 6"
 DISK_MAP["pci-0000:01:00.0-ata-1"]="Disk 7"
 DISK_MAP["pci-0000:01:00.0-ata-2"]="Disk 8"
 
-sorted_bays=(
+all_bays=(
     "pci-0000:00:1f.2-ata-1"
     "pci-0000:00:1f.2-ata-2"
     "pci-0000:00:1f.2-ata-3"
@@ -42,6 +48,9 @@ sorted_bays=(
     "pci-0000:01:00.0-ata-1"
     "pci-0000:01:00.0-ata-2"
 )
+
+# Dynamically slice bay list to match physical motherboard capacity
+sorted_bays=("${all_bays[@]:0:$TOTAL_BAYS}")
 
 echo -e "${CYAN}==============================================================================${NC}"
 echo -e "${BOLD}       TeraStation TS5800D - Disk Map and Health Diagnostics                  ${NC}"
@@ -181,9 +190,22 @@ for p in "${sorted_bays[@]}"; do
         printf "%-7s %-10s %-6s %-20s %-16s " "$disk_label" "$dev_path" "$size" "${model:0:19}" "${serial:0:15}"
         echo -e "$status_text"
     else
-        printf "%-7s %-10s %-6s %-20s %-16s ${RED}%s${NC}\n" "$disk_label" "[EMPTY]" "-" "-" "-" "NO DISK"
-        EMPTY_DISKS+=("$disk_label")
-        FAILED_COUNT=$((FAILED_COUNT + 1))
+        # Determine if this empty bay was part of an active array (real failure) or simply unpopulated
+        is_missing_member=0
+        if echo "$mdstat_raw" | grep -q "\[_"; then
+            is_missing_member=1
+        fi
+        if echo "$zfs_status_raw" | grep -iE "(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)"; then
+            is_missing_member=1
+        fi
+
+        if [ "$is_missing_member" -eq 1 ]; then
+            printf "%-7s %-10s %-6s %-20s %-16s ${RED}%s${NC}\n" "$disk_label" "[EMPTY]" "-" "-" "-" "NO DISK"
+            EMPTY_DISKS+=("$disk_label")
+            FAILED_COUNT=$((FAILED_COUNT + 1))
+        else
+            printf "%-7s %-10s %-6s %-20s %-16s ${CYAN}%s${NC}\n" "$disk_label" "[EMPTY]" "-" "-" "-" "UNPOPULATED"
+        fi
     fi
 done
 

@@ -71,8 +71,8 @@ Compared to vanilla Debian or generic NAS distributions, this suite introduces t
 * Disabled open demo mode (`generate_node_acls=0`) and mapped the LUN exclusively to the authorized host initiator IQN. Blocks unauthorized network devices from connecting concurrently, eliminating the risk of NTFS filesystem corruption over shared block storage.
 
 ### 7. Guided Disk Management Utilities (`status` and `rebuild`)
-* **/usr/local/sbin/status:** Displays an interactive visual grid of all 8 bays, showing serial numbers, individual SMART temperatures, `md0`/`md1` OS mirrors, and ZFS pool health.
-* **/usr/local/sbin/rebuild:** Automated disk replacement tool (bays 1–8) that clones the factory MBR partition table, synchronizes OS mirrors, reintegrates the data slice into ZFS, and installs GRUB across all 8 MBRs to guarantee boot redundancy from any bay.
+* **/usr/local/sbin/status:** Displays an interactive visual grid of the drive bays, showing serial numbers, individual SMART temperatures, `md0`/`md1` OS mirrors, and ZFS pool health. Automatically senses the motherboard's physical SATA port count (dynamically adapting between 2, 4, 6, and 8-bay appliances) and distinguishes intentionally empty bays (`UNPOPULATED`) from true drive failures (`NO DISK`).
+* **/usr/local/sbin/rebuild:** Automated disk replacement tool that clones the factory MBR partition table, synchronizes OS mirrors, reintegrates the data slice into ZFS, and installs GRUB across all drive MBRs to guarantee boot redundancy from any bay.
 
 ### 8. Surgical ZFS ARC Memory Calibration for 2 GB RAM
 * Configured in `/etc/modprobe.d/zfs.conf` with `zfs_arc_max=1288490188` (1.2 GB cap). Prevents out-of-memory (OOM) kernel panics and allowed the Atom D2700 with only 2 GB of RAM to perform a non-stop 5 TB restore with **0 bytes of swap used** and an idle OS footprint of just 290 MB.
@@ -109,10 +109,10 @@ Below are the ASCII representations of the front LCD display screens managed by 
 ================================================================================
 3. System Ready / Healthy - Backlight: SOLID GREEN (0x02)
 ================================================================================
-+----------------+     +----------------+     +----------------+
-|  TeraStation   | --> | IP bond0:      | --> | Temp: CPU 44C  | (Cycles every
-|  Debian 12.12  |     | 192.168.68.15  |     | Ambient 28C    |  5 seconds)
-+----------------+     +----------------+     +----------------+
++----------------+     +----------------+
+|  TeraStation   | --> |2026-11-02 22:20| (Cycles automatically
+|  Debian 12.12  |     |IP 192.168.68.15|  between System and
++----------------+     +----------------+  Date/IP every 5 seconds)
 
 ================================================================================
 4. Monotonic Disk Rebuild - Backlight: SOLID AMBER (0x03)
