@@ -1,7 +1,8 @@
 ================================================================================
 BUFFALO TERASTATON TS5800D - GUIA RAPIDO DE RECUPERACAO (DISASTER RECOVERY)
-Desenvolvedor: Marcelo Santos - ActionSys
-Localizacao do Pacote: W:\OneDrive\Projetos\Pessoal\Storage_TeraStation
+Desenvolvedor: Marcelo Santos - ActionSys (MarcSant71)
+Repositorio GitHub: https://github.com/MarcSant71/TeraStation
+Localizacao do Pacote: W:\Projetos\Pessoal\Storage_TeraStation
 ================================================================================
 
 Procedimento para restaurar o sistema do zero no storage em caso de falha:
@@ -42,7 +43,7 @@ O script 'install.sh' aplica automaticamente:
 - Limite de memoria do ZFS ARC em 1.2 GB (/etc/modprobe.d/zfs.conf)
 - Sensores termicos e drivers de GPIO (/etc/modules, /etc/sensors.d/)
 - Permissoes sudoers sem senha (/etc/sudoers.d/)
-- LUN iSCSI Target LIO com identificacao BUFFALO Storage e ACL estrita (/etc/rtslib-fb-target/saveconfig.json)
+- LUN iSCSI Target LIO com UNMAP/TRIM ativado (/etc/rtslib-fb-target/saveconfig.json)
 
 --------------------------------------------------------------------------------
 4. RECONECTAR O POOL ZFS E ATIVAR OS SERVICOS

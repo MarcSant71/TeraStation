@@ -127,22 +127,14 @@ systemctl enable micon_boot.service lcd_monitor.service hotswap.service
 systemctl disable --now smartmontools zfs-zed.service fancontrol.service e2scrub_all.timer e2scrub_reap.service fstrim.timer man-db.timer apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 echo "      [OK] Servicos oficiais habilitados e servicos redundantes desativados."
 
-# 6. iSCSI Target Config (targetcli) e Patch SCSI Vendor/Product
-echo "[6/7] Restaurando configuracao do iSCSI Target LIO..."
-if [ -f "${FILES_DIR}/etc/rtslib-fb-target/saveconfig.json" ]; then
-    mkdir -p /etc/rtslib-fb-target /etc/target
-    cp -a "${FILES_DIR}/etc/rtslib-fb-target/saveconfig.json" /etc/rtslib-fb-target/saveconfig.json
-    chmod 600 /etc/rtslib-fb-target/saveconfig.json
-    echo "      [OK] saveconfig.json restaurado em /etc/rtslib-fb-target/."
-
-    # Calibra o driver rtslib_fb/tcm.py para identificar o storage como "BUFFALO Storage SCSI Disk Device"
+# 6. iSCSI Target Config (targetcli) e Customizacao SCSI Vendor BUFFALO
+echo "[6/7] Restaurando configuracao do iSCSI Target LIO e Vendor BUFFALO..."
+if [ -f /usr/lib/python3/dist-packages/rtslib_fb/tcm.py ]; then
     python3 -c "
-tcm = '/usr/lib/python3/dist-packages/rtslib_fb/tcm.py'
-try:
-    with open(tcm, 'r') as f:
-        c = f.read()
-    target = '        self.wwn = wwn\n\n        self._config_pr_aptpl()'
-    repl = '''        self.wwn = wwn
+with open('/usr/lib/python3/dist-packages/rtslib_fb/tcm.py', 'r') as f:
+    c = f.read()
+target = '        self.wwn = wwn\n\n        self._config_pr_aptpl()'
+replacement = '''        self.wwn = wwn
         try:
             fwrite(\"%s/wwn/vendor_id\" % self.path, \"BUFFALO\\n\")
             fwrite(\"%s/wwn/product_id\" % self.path, \"Storage\\n\")
@@ -150,14 +142,17 @@ try:
             pass
 
         self._config_pr_aptpl()'''
-    if target in c:
-        with open(tcm, 'w') as f:
-            f.write(c.replace(target, repl, 1))
-        print('      [OK] Driver rtslib_fb calibrado para identificacao BUFFALO Storage.')
-except Exception:
-    pass
+if target in c:
+    with open('/usr/lib/python3/dist-packages/rtslib_fb/tcm.py', 'w') as f:
+        f.write(c.replace(target, replacement, 1))
 " 2>/dev/null || true
+fi
 
+if [ -f "${FILES_DIR}/etc/rtslib-fb-target/saveconfig.json" ]; then
+    mkdir -p /etc/rtslib-fb-target /etc/target
+    cp -a "${FILES_DIR}/etc/rtslib-fb-target/saveconfig.json" /etc/rtslib-fb-target/saveconfig.json
+    chmod 600 /etc/rtslib-fb-target/saveconfig.json
+    echo "      [OK] saveconfig.json restaurado em /etc/rtslib-fb-target/."
     if systemctl is-active --quiet rtslib-fb-targetctl.service; then
         targetctl restore || true
     fi
