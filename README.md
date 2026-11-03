@@ -5,93 +5,93 @@
 [![Storage](https://img.shields.io/badge/Storage-OpenZFS%20%2B%20LIO%20iSCSI-orange.svg)](https://openzfs.org/)
 [![License](https://img.shields.io/badge/License-GPL%20v2%20%2F%20MIT-green.svg)](LICENSE)
 
-Pacote de engenharia, melhorias de estabilidade, gerenciamento de discos e personalização para transformar a família de appliances **Buffalo TeraStation Intel x86_64** em um storage corporativo de alta performance rodando **Debian 12 Bookworm puro**, OpenZFS e iSCSI Target LIO.
+An enterprise engineering suite, stability enhancements, disk management tools, and hardware customizations designed to transform the **Buffalo TeraStation Intel x86_64** appliance family into a resilient, high-performance SAN running **vanilla Debian 12 Bookworm**, OpenZFS, and LIO iSCSI Target.
 
 ---
 
-## 1. Hardware Suportado (Target Architecture)
+## 1. Supported Hardware (Target Architecture)
 
-Este projeto foi desenvolvido e validado em ambiente real de produção no hardware:
+This project was developed, tuned, and battle-tested in a live production environment with 8 mechanical drives:
 
-* **Hardware Primário Homologado:** **Buffalo TeraStation TS5800D (TS5800DN)**
-  * **Chassi:** 8 Baias SATA Hot-Swap
-  * **Processador:** Intel Atom D2700 (2.13 GHz, 2 Cores / 4 Threads x86_64)
-  * **Memória RAM:** 2 GB DDR3
-  * **Rede:** 2x Gigabit Ethernet (Intel 82574L / e1000e em Dual-NIC Bonding ALB)
-  * **Controlador Frontal:** Microcontrolador Renesas (MICON V3) em `/dev/ttyS1` + Display LCD 16x2 com Backlight RGB
-  * **Monitor de Hardware:** ITE IT8721F SuperIO (Sensores térmicos e PWM de ventoinhas)
+* **Primary Certified Hardware:** **Buffalo TeraStation TS5800D (TS5800DN)**
+  * **Chassis:** 8-Bay Hot-Swap SATA
+  * **Processor:** Intel Atom D2700 (2.13 GHz, 2 Cores / 4 Threads x86_64)
+  * **Memory:** 2 GB DDR3 RAM
+  * **Networking:** Dual Gigabit Ethernet (Intel 82574L / e1000e in Dual-NIC Bonding ALB)
+  * **Front Controller:** Renesas Microcontroller (MICON V3) on `/dev/ttyS1` + 16x2 Character LCD with RGB Backlight
+  * **Hardware Monitor:** ITE IT8721F SuperIO (Thermal sensors and PWM fan controls)
 
-* **Família de Hardwares Compatíveis (Buffalo Intel x86_64):**
-  * **Série TS5000:** TS5200D (2 baias), TS5400D (4 baias), TS5400R (4 baias Rack), TS5600D (6 baias), TS5800D (8 baias).
-  * **Série VHL (V-Series Intel):** TS-WVHL, TS-QVHL, TS-RVHL, TS-6VHL, TS-8VHL.
+* **Compatible Hardware Family (Buffalo Intel x86_64):**
+  * **TS5000 Series:** TS5200D (2 bays), TS5400D (4 bays), TS5400R (4 bays Rackmount), TS5600D (6 bays), TS5800D (8 bays).
+  * **VHL Series (V-Series Intel):** TS-WVHL, TS-QVHL, TS-RVHL, TS-6VHL, TS-8VHL.
 
 ---
 
-## 2. Atribuição e Pré-requisito Obrigatório (Upstream Project)
+## 2. Upstream Project Attribution & Mandatory Prerequisite
 
 > [!IMPORTANT]
-> **ESTE PROJETO É UMA CAMADA DE CUSTOMIZAÇÃO AVANÇADA (ADD-ON).**  
-> Para que estas melhorias funcionem, **o usuário deve primeiro realizar a instalação base do Debian** utilizando as ferramentas e o instalador disponibilizados pelo projeto original do mantenedor **Colin (`1000001101000`)**.
+> **THIS SUITE IS AN ADVANCED CUSTOMIZATION LAYER (ADD-ON).**  
+> For these enhancements to function properly, **the user must first perform a base Debian installation** using the tools, kernel modules, and installation guides provided by the original upstream project maintained by **Colin (`1000001101000`)**.
 
-Agradecimentos e créditos fundamentais à comunidade e ao mantenedor original:
-* **Repositório Base:** [`1000001101000/Debian_on_Intel_Terastations`](https://github.com/1000001101000/Debian_on_Intel_Terastations)
-* **Biblioteca do Microcontrolador:** [`1000001101000/Python_buffalo_libmicon`](https://github.com/1000001101000/Python_buffalo_libmicon)
-* **Documentação Comunitária:** [Buffalo NAS Wiki on Miraheze](https://buffalonas.miraheze.org/wiki/Installing_Debian_on_Intel_Terastations)
+Deep appreciation and foundational credit to the upstream developer and community:
+* **Upstream Repository:** [`1000001101000/Debian_on_Intel_Terastations`](https://github.com/1000001101000/Debian_on_Intel_Terastations)
+* **Microcontroller Library:** [`1000001101000/Python_buffalo_libmicon`](https://github.com/1000001101000/Python_buffalo_libmicon)
+* **Community Documentation:** [Buffalo NAS Wiki on Miraheze](https://buffalonas.miraheze.org/wiki/Installing_Debian_on_Intel_Terastations)
 
-Depois de ter o sistema Debian base instalado com os drivers básicos do projeto original, aplique este pacote para obter todo o ferramental de resiliência corporativa detalhado abaixo.
-
----
-
-## 3. Resumo das Melhorias Implementadas
-
-Em comparação com a instalação básica do Debian, este pacote introduz as seguintes melhorias técnicas de alta fidelidade ao hardware de fábrica:
-
-### 1. Proteção de Fábrica no Botão Power (Double-Press Protection)
-* **O Problema:** O Debian padrão (`systemd-logind`) vem configurado com `HandlePowerKey=poweroff`. Um toque acidental no botão Power frontal desliga imediatamente o NAS, cancelando gravações ativas, restores ou rebuilds de array.
-* **A Melhoria:** Configuramos `HandlePowerKey=ignore` no `systemd-logind` e implementamos uma máquina de estados baseada em eventos no `micon_lcd_monitor.py` escutando `KEY_POWER` (código 116):
-  * **1º Toque:** Emite 1 bipe de alerta, acende o LCD em **Âmbar Sólido** e inicia contagem regressiva de 6 segundos.
-  * **2º Toque (dentro de 6s):** Emite bipe de confirmação e dispara `systemctl poweroff` de forma limpa.
-  * **Timeout (sem 2º toque):** Cancela a solicitação com bipe suave e restaura a tela normal sem interromper nenhuma operação de I/O.
-
-### 2. Progresso Monotônico e Linear de Reconstrução RAID no LCD
-* **O Problema:** Como o Debian espelha o SO em duas fatias RAID (`md0` para o rootfs ~86% e `md1` para o swap ~14%), o monitor padrão contava de 0% a 100% no root e depois zerava abruptamente para contar de 0% a 100% no swap, dando a impressão de que a reconstrução falhou ou reiniciou.
-* **A Melhoria:** Algoritmo ponderado contínuo que calcula o progresso unificado de 0.0% a 100.0%, mantendo o alinhamento estrito dos dois-pontos (`:`) no display 16x2.
-
-### 3. Splash Screen Instantâneo no Initramfs (Segundo 1 do Kernel)
-* **A Melhoria:** Hook de boot em `/etc/initramfs-tools/hooks/terastation_lcd` e script `init-top` que executa no primeiro segundo após o kernel Linux assumir o controle da BIOS, acendendo o display em **Branco/Aqua (`0x07`)** com `TeraStation / Loading OS...`. Reduz o timeout do GRUB para 1s.
-
-### 4. Identidade SCSI Personalizada (`BUFFALO Storage SCSI Disk Device`)
-* **O Problema:** Por padrão, o Linux-IO Target (LIO) exporta o volume como o nome genérico `LIO-ORG lun0 SCSI Disk Device`.
-* **A Melhoria:** Configuração e patch de persistência no `rtslib_fb/tcm.py` para responder às consultas SCSI INQUIRY com **Vendor:** `BUFFALO` e **Product:** `Storage`, exibindo no Gerenciador de Tarefas do Windows o dispositivo profissional **`BUFFALO Storage SCSI Disk Device`** (idêntico ao padrão da Synology).
-
-### 5. Suporte Completo a SCSI UNMAP / TRIM
-* Habilitado suporte a descarte de blocos no LIO (`emulate_tpu=1`, `max_unmap_block_desc_count=16`, `unmap_granularity=1`), permitindo que o Windows execute a ferramenta de Otimização de Unidade / TRIM liberando espaço ZFS real no storage.
-
-### 6. Blindagem de Acesso LUN Masking / ACL
-* Desativação do modo de demonstração (`generate_node_acls=0`) e amarração estrita ao IQN do iniciador do host autorizado. Impede conexões iSCSI simultâneas concorrentes por outros aparelhos na rede local, eliminando o risco de corrupção do sistema de arquivos NTFS.
-
-### 7. Ferramental Guiado de Manutenção de Discos (`status` e `rebuild`)
-* **/usr/local/sbin/status:** Exibe o mapa visual das 8 baias com número de série, temperatura SMART individual, status dos arrays `md0`/`md1` e integridade do pool ZFS.
-* **/usr/local/sbin/rebuild:** Reconstrução inteligente de baias (1 a 8) com clonagem da tabela MBR de fábrica, sincronização RAID, reintegração ao ZFS e instalação automática do bootloader GRUB em todas as MBRs dos 8 discos.
-
-### 8. Otimização Cirúrgica de Memória ZFS ARC para 2 GB RAM
-* Otimização em `/etc/modprobe.d/zfs.conf` limitando o ZFS ARC a 1.2 GB (`zfs_arc_max=1288490188`). Permite que o processador Atom com apenas 2 GB de RAM execute cargas de gravação massivas (testado com restore ininterrupto de 5 TB) mantendo **zero bytes de uso de swap** e consumo base de 290 MB.
-
-### 9. Agregação de Link de Rede Dual-NIC Bonding
-* Configuração do driver `bonding` em modo `balance-alb` (Adaptive Load Balancing, Mode 6), agregando as 2 placas Gigabit físicas para entrega de até 2 Gbps de vazão combinada sem exigir switch gerenciável com suporte a LACP.
-
-### 10. Calibração Térmica e de Sensores SuperIO
-* Calibração das curvas de ventoinha e supressão de alarmes falsos de violação de gabinete (chassis intrusion) no chip ITE IT8721F (`/etc/sensors.d/it8721.conf`).
+Once you have a clean base Debian system booting with the basic hardware drivers from the upstream project, deploy this package to enable full enterprise resilience and factory fidelity.
 
 ---
 
-## 4. Máquina de Estados Visual do Display LCD (16x2)
+## 3. Key Enhancements & Architecture Improvements
 
-Abaixo estão as telas renderizadas pelo microcontrolador e pelo daemon `micon_lcd_monitor.py`:
+Compared to vanilla Debian or generic NAS distributions, this suite introduces the following engineering improvements:
+
+### 1. Buffalo Factory Double-Press Power Button Protection
+* **The Problem:** Vanilla Debian (`systemd-logind`) defaults to `HandlePowerKey=poweroff`. An accidental single tap on the front power button instantly powers off the NAS, aborting active file transfers, restores, or RAID rebuilds.
+* **The Solution:** We configure `HandlePowerKey=ignore` in `systemd-logind` and implement an event-driven double-press state machine in `micon_lcd_monitor.py` listening on `KEY_POWER` (code 116):
+  * **1st Press:** Sounds 1 alert beep, changes LCD backlight to **Solid Amber**, and displays a 6-second countdown.
+  * **2nd Press (within 6s):** Emits a confirmation beep and cleanly triggers `/bin/systemctl poweroff`.
+  * **Timeout (no 2nd press):** Cancels the request with a gentle notification beep and smoothly restores normal LCD status without interrupting any storage I/O.
+
+### 2. Monotonic Linear RAID Rebuild Progress on LCD
+* **The Problem:** Because Debian mirrors the OS across all drives using two software RAID slices (`md0` rootfs ~86% and `md1` swap ~14%), the stock LCD monitor counted from 0% to 100% on root and then abruptly reset to 0% for swap, giving users the false impression that resync failed or restarted from scratch.
+* **The Solution:** A weighted linear algorithm computes a continuous progress bar from 0.0% to 100.0%, maintaining strict vertical alignment of the colons (`:`) on the 16x2 character display.
+
+### 3. Instant Early Kernel/Initramfs Splash Screen
+* **The Solution:** An initramfs-tools hook (`/etc/initramfs-tools/hooks/terastation_lcd` and `scripts/init-top/terastation_lcd`) runs at second 1 of the Linux kernel (right after BIOS handoff), lighting the LCD in **Solid Aqua/White (`0x07`)** with `TeraStation / Loading OS...`. Decreases GRUB timeout to 1 second for ultra-fast boot transition.
+
+### 4. Custom SCSI Identity (`BUFFALO Storage SCSI Disk Device`)
+* **The Problem:** By default, the Linux-IO Target (LIO) identifies exported LUNs as the generic string `LIO-ORG lun0 SCSI Disk Device`.
+* **The Solution:** Kernel backstore customization and an automatic persistence patch in `rtslib_fb/tcm.py` configuring **Vendor:** `BUFFALO` and **Product:** `Storage`. Windows Task Manager and Device Manager now proudly display **`BUFFALO Storage SCSI Disk Device`** (mirroring the clean naming convention used by enterprise vendors like Synology).
+
+### 5. Full SCSI UNMAP / TRIM Support
+* Enabled block discard support in LIO (`emulate_tpu=1`, `max_unmap_block_desc_count=16`, `unmap_granularity=1`), allowing Windows Optimize Drives / TRIM to reclaim deleted capacity directly back to the ZFS thin-provisioned pool.
+
+### 6. Strict LUN Masking / ACL Protection
+* Disabled open demo mode (`generate_node_acls=0`) and mapped the LUN exclusively to the authorized host initiator IQN. Blocks unauthorized network devices from connecting concurrently, eliminating the risk of NTFS filesystem corruption over shared block storage.
+
+### 7. Guided Disk Management Utilities (`status` and `rebuild`)
+* **/usr/local/sbin/status:** Displays an interactive visual grid of all 8 bays, showing serial numbers, individual SMART temperatures, `md0`/`md1` OS mirrors, and ZFS pool health.
+* **/usr/local/sbin/rebuild:** Automated disk replacement tool (bays 1–8) that clones the factory MBR partition table, synchronizes OS mirrors, reintegrates the data slice into ZFS, and installs GRUB across all 8 MBRs to guarantee boot redundancy from any bay.
+
+### 8. Surgical ZFS ARC Memory Calibration for 2 GB RAM
+* Configured in `/etc/modprobe.d/zfs.conf` with `zfs_arc_max=1288490188` (1.2 GB cap). Prevents out-of-memory (OOM) kernel panics and allowed the Atom D2700 with only 2 GB of RAM to perform a non-stop 5 TB restore with **0 bytes of swap used** and an idle OS footprint of just 290 MB.
+
+### 9. Dual-NIC Bonding Link Aggregation
+* Configured the kernel `bonding` driver in `balance-alb` mode (Adaptive Load Balancing, Mode 6), aggregating both physical Gigabit NICs for up to 2 Gbps combined throughput with automatic failover, without requiring an expensive LACP/802.3ad managed switch.
+
+### 10. SuperIO Hardware Monitor Calibration
+* Calibrated sensor curves and suppressed false positive chassis intrusion alarms in the ITE IT8721F SuperIO chip (`/etc/sensors.d/it8721.conf`).
+
+---
+
+## 4. Visual 16x2 Character LCD State Matrix
+
+Below are the ASCII representations of the front LCD display screens managed by `micon_lcd_monitor.py` and the microcontroller:
 
 ```text
 ================================================================================
-1. BIOS / POST (Hardware Buffalo) - Backlight: APAGADO (OFF)
+1. BIOS / POST (Buffalo Hardware) - Backlight: OFF (Dark)
 ================================================================================
 +----------------+
 | TeraStation    |
@@ -99,7 +99,7 @@ Abaixo estão as telas renderizadas pelo microcontrolador e pelo daemon `micon_l
 +----------------+
 
 ================================================================================
-2. Kernel / Initramfs (Segundo 1 do Linux) - Backlight: AQUA / BRANCO (0x07)
+2. Kernel / Initramfs (Second 1 of Linux) - Backlight: AQUA / WHITE (0x07)
 ================================================================================
 +----------------+
 |  TeraStation   |
@@ -107,113 +107,113 @@ Abaixo estão as telas renderizadas pelo microcontrolador e pelo daemon `micon_l
 +----------------+
 
 ================================================================================
-3. Sistema Pronto / Saudável - Backlight: VERDE SÓLIDO (0x02)
+3. System Ready / Healthy - Backlight: SOLID GREEN (0x02)
 ================================================================================
 +----------------+     +----------------+     +----------------+
-|  TeraStation   | --> | IP bond0:      | --> | Temp: CPU 44C  | (Alterna a
-|  Debian 12.12  |     | 192.168.68.15  |     | Ambient 28C    |  cada 5s)
+|  TeraStation   | --> | IP bond0:      | --> | Temp: CPU 44C  | (Cycles every
+|  Debian 12.12  |     | 192.168.68.15  |     | Ambient 28C    |  5 seconds)
 +----------------+     +----------------+     +----------------+
 
 ================================================================================
-4. Reconstrução de Disco (Rebuild Monotônico) - Backlight: ÂMBAR SÓLIDO (0x03)
+4. Monotonic Disk Rebuild - Backlight: SOLID AMBER (0x03)
 ================================================================================
 +----------------+
-|  REBUILDING: 3 |  (Progresso contínuo de 0.0% a 100.0% unificando root e swap;
-| PROGRESS: 47.8%|   LED verde da baia correspondente piscando no chassi)
-+----------------+
-
-================================================================================
-5. Alerta de Falha de Hardware - Backlight: VERMELHO PISCANTE (0x01) + BUZZER
-================================================================================
-+----------------+
-|** RAID ALERT **|  (Indica falha imediata ou ausência física de disco;
-| FAIL: DISK 3   |   LED vermelho da baia acende fixo no chassi)
+|  REBUILDING: 3 |  (Continuous 0.0% to 100.0% progress unifying root & swap;
+| PROGRESS: 47.8%|   Corresponding tray LED flashes green on chassis)
 +----------------+
 
 ================================================================================
-6. Proteção Botão Power (1º Toque) - Backlight: ÂMBAR SÓLIDO (0x03) + BEEP
+5. Critical Hardware Alarm - Backlight: BLINKING RED (0x01) + AUDIBLE BUZZER
 ================================================================================
 +----------------+
-|** SHUTDOWN? ** |  (Contagem regressiva de 6 segundos. Se não pressionar de
-|Press Again [6s]|   novo, cancela e restaura o LCD verde sem desligar)
+|** RAID ALERT **|  (Indicates degraded array or missing drive;
+| FAIL: DISK 3   |   Corresponding tray LED turns solid red on chassis)
 +----------------+
 
 ================================================================================
-7. Desligamento Confirmado (2º Toque) - Backlight: ÂMBAR SÓLIDO (0x03)
+6. Power Button Safety (1st Press) - Backlight: SOLID AMBER (0x03) + BEEP
 ================================================================================
 +----------------+
-|  TeraStation   |  (Desmontagem segura de volumes, flush do ZFS e corte de
-|Shutting Down...|   energia sincronizado pelo microcontrolador)
+|** SHUTDOWN? ** |  (6-second countdown timer. If not pressed again, cancels
+|Press Again [6s]|   and restores solid green display without powering off)
++----------------+
+
+================================================================================
+7. Confirmed Shutdown (2nd Press) - Backlight: SOLID AMBER (0x03)
+================================================================================
++----------------+
+|  TeraStation   |  (Clean filesystem unmount, ZFS pool flush, and synchronized
+|Shutting Down...|   power cutoff managed by the microcontroller)
 +----------------+
 ```
 
 ---
 
-## 5. Estrutura do Repositório
+## 5. Repository File Structure
 
 ```text
-├── install.sh                       # Script mestre de restauração e instalação
-├── README.md                        # Documentação completa de engenharia
-├── readme.txt                       # Guia rápido de terminal
-├── terastation_customizations.tar.gz# Pacote compactado para deployment rápido
+├── install.sh                       # Master restoration & deployment script
+├── README.md                        # Complete technical documentation
+├── readme.txt                       # Terminal quick-reference card
+├── terastation_customizations.tar.gz# Compressed archive for instant offline deployment
 └── files/
     ├── etc/
-    │   ├── default/grub             # Timeout de 1s para boot rápido
-    │   ├── initramfs-tools/         # Hook do display no initramfs
-    │   ├── modules                  # Modulos it87ts, gpio-ich, gpio-it87
-    │   ├── modprobe.d/zfs.conf      # Limite de 1.2 GB no ZFS ARC
-    │   ├── rtslib-fb-target/        # Configuracao persistente LIO iSCSI Target
-    │   ├── sensors.d/it8721.conf    # Calibracao dos sensores termicos e ventoinha
-    │   ├── sudoers.d/               # Regras sem senha para comandos essenciais
+    │   ├── default/grub             # 1-second timeout for rapid booting
+    │   ├── initramfs-tools/         # Early splash display hook
+    │   ├── modules                  # Kernel modules (it87ts, gpio-ich, gpio-it87)
+    │   ├── modprobe.d/zfs.conf      # 1.2 GB ZFS ARC ceiling
+    │   ├── rtslib-fb-target/        # Persistent LIO iSCSI Target configuration
+    │   ├── sensors.d/it8721.conf    # Thermal sensors & fan curve tuning
+    │   ├── sudoers.d/               # Passwordless sudo rules for essential daemons
     │   └── systemd/
     │       ├── logind.conf.d/       # HandlePowerKey=ignore
     │       └── system/              # lcd_monitor, micon_boot, hotswap services
     └── usr/local/
         ├── sbin/
-        │   ├── status               # Monitor visual das 8 baias e ZFS
-        │   └── rebuild              # Reconstrucao guiada de discos com GRUB MBR
+        │   ├── status               # Visual 8-bay drive & ZFS monitor
+        │   └── rebuild              # Guided disk replacement tool with GRUB MBR
         └── bin/
-            ├── micro-evtd           # Utilitario binario de comunicacao MICON
-            └── micon_scripts/       # Daemon do LCD, beeper e maquina de estados
+            ├── micro-evtd           # Microcontroller communication binary
+            └── micon_scripts/       # LCD daemon, beeper, and state machine
 ```
 
 ---
 
-## 6. Instalação e Restauração de Desastre (Disaster Recovery)
+## 6. Installation & Disaster Recovery Guide
 
-### Passo 1: Instale o Debian Base
-Siga as instruções do repositório upstream [`1000001101000/Debian_on_Intel_Terastations`](https://github.com/1000001101000/Debian_on_Intel_Terastations) para instalar o **Debian 12 Bookworm Netinst** (64-bit x86_64 minimal, apenas OpenSSH e Standard Utilities).
+### Step 1: Install Base Debian
+Follow the installation guide in upstream [`1000001101000/Debian_on_Intel_Terastations`](https://github.com/1000001101000/Debian_on_Intel_Terastations) to install **Debian 12 Bookworm Netinst** (64-bit x86_64 minimal, select only OpenSSH Server and Standard System Utilities).
 
-### Passo 2: Instale os Pacotes Essenciais
-No terminal do TeraStation via SSH:
+### Step 2: Install Essential Dependencies
+Log in to the TeraStation via SSH and run:
 ```bash
 sudo apt-get update
 sudo apt-get install -y git zfs-dkms zfsutils-linux targetcli-fb python3 ifenslave smartmontools hdparm lm-sensors
 ```
 
-### Passo 3: Clone e Aplique as Customizações
+### Step 3: Clone and Deploy Customizations
 ```bash
 git clone https://github.com/MarcSant71/TeraStation.git /tmp/TeraStation
 cd /tmp/TeraStation
 sudo ./install.sh
 ```
 
-O script executará todas as etapas automaticamente:
-* Instalação dos utilitários `status` e `rebuild`.
-* Configuração do daemon de LCD e proteção de desligamento.
-* Injeção do hook no `initramfs` e atualização do GRUB.
-* Ajustes de memória do ZFS e sensores térmicos.
-* Restauração da configuração de iSCSI com identificação `BUFFALO Storage`.
+The script will automatically execute:
+* Install `status` and `rebuild` utilities into `/usr/local/sbin`.
+* Configure the LCD daemon, power button safety machine, and shutdown hooks.
+* Inject the early boot splash into `initramfs` and update GRUB.
+* Apply ZFS ARC memory optimizations and SuperIO sensor configs.
+* Restore LIO iSCSI Target configuration with custom `BUFFALO Storage` identification.
 
-### Passo 4: Inicialização dos Serviços
+### Step 4: Start Services & Reconnect Storage
 ```bash
 sudo systemctl restart micon_boot.service lcd_monitor.service hotswap.service rtslib-fb-targetctl.service
 ```
 
 ---
 
-## 7. Licença e Créditos
+## 7. License & Credits
 
-* **Autor das Customizações:** Marcelo Santos ([MarcSant71](https://github.com/MarcSant71))
-* **Projeto Upstream Original:** Colin ([`1000001101000`](https://github.com/1000001101000))
-* **Licença:** Distribuído sob os termos da licença GNU General Public License v2 (GPL-2.0) e MIT, em conformidade com o projeto original.
+* **Author of Customizations:** Marcelo Santos ([MarcSant71](https://github.com/MarcSant71))
+* **Original Upstream Project:** Colin ([`1000001101000`](https://github.com/1000001101000))
+* **License:** Distributed under the GNU General Public License v2 (GPL-2.0) and MIT License, matching the upstream project.
