@@ -1,0 +1,15 @@
+#!/bin/sh
+PREREQ=""
+prereqs() {
+    echo "$PREREQ"
+}
+case $1 in
+prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+if [ -x /bin/micro-evtd ]; then
+    /bin/micro-evtd -s 0003,209020205465726153746174696f6e202020204c6f6164696e67204f532e2e2e2020,0025,013220,013aff,02510007,02500007 >/dev/null 2>&1 || true
+fi

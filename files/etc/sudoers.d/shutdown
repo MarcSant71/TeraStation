@@ -1,0 +1,1 @@
+marcsant ALL=(ALL) NOPASSWD: /sbin/poweroff, /sbin/shutdown, /bin/systemctl

@@ -1,0 +1,21 @@
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+source /etc/network/interfaces.d/*
+
+# The loopback network interface
+auto lo
+iface lo inet loopback
+
+# Portas fisicas como escravas (sem IP proprio)
+iface enp3s0 inet manual
+iface enp4s0 inet manual
+
+# Interface Agregada com DHCP
+auto bond0
+iface bond0 inet dhcp
+    bond-slaves enp3s0 enp4s0
+    bond-mode balance-alb
+    bond-miimon 100
+    bond-downdelay 200
+    bond-updelay 200

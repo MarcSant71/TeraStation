@@ -1,0 +1,12 @@
+[Unit]
+Description=Tell Terastation it finished booting and enable LCD/LEDs
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/micon_scripts/micon_startup.py
+
+[Install]
+WantedBy=basic.target

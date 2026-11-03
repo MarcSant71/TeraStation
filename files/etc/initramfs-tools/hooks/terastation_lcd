@@ -1,0 +1,17 @@
+#!/bin/sh
+PREREQ=""
+prereqs() {
+    echo "$PREREQ"
+}
+case $1 in
+prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+if [ -x /usr/local/bin/micro-evtd ]; then
+    copy_exec /usr/local/bin/micro-evtd /bin/micro-evtd
+fi

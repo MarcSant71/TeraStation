@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# TeraStation TS5800D - Disk Map and Health Diagnostics
+# Read-only utility displaying real-time status of all 8 bays and storage stack
+# ==============================================================================
+
+set -o pipefail
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+# Clear terminal screen if interactive
+if [ -t 1 ]; then
+    clear
+fi
+
+# ANSI Colors
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+POOL_NAME="storage"
+
+declare -A DISK_MAP
+DISK_MAP["pci-0000:00:1f.2-ata-1"]="Disk 1"
+DISK_MAP["pci-0000:00:1f.2-ata-2"]="Disk 2"
+DISK_MAP["pci-0000:00:1f.2-ata-3"]="Disk 3"
+DISK_MAP["pci-0000:00:1f.2-ata-4"]="Disk 4"
+DISK_MAP["pci-0000:00:1f.2-ata-5"]="Disk 5"
+DISK_MAP["pci-0000:00:1f.2-ata-6"]="Disk 6"
+DISK_MAP["pci-0000:01:00.0-ata-1"]="Disk 7"
+DISK_MAP["pci-0000:01:00.0-ata-2"]="Disk 8"
+
+sorted_bays=(
+    "pci-0000:00:1f.2-ata-1"
+    "pci-0000:00:1f.2-ata-2"
+    "pci-0000:00:1f.2-ata-3"
+    "pci-0000:00:1f.2-ata-4"
+    "pci-0000:00:1f.2-ata-5"
+    "pci-0000:00:1f.2-ata-6"
+    "pci-0000:01:00.0-ata-1"
+    "pci-0000:01:00.0-ata-2"
+)
+
+echo -e "${CYAN}==============================================================================${NC}"
+echo -e "${BOLD}       TeraStation TS5800D - Disk Map and Health Diagnostics                  ${NC}"
+echo -e "${CYAN}==============================================================================${NC}"
+printf "%-7s %-10s %-6s %-20s %-16s %s\n" "DISK" "DEVICE" "SIZE" "MODEL" "SERIAL" "STATUS"
+echo -e "------------------------------------------------------------------------------"
+
+zfs_status_raw=$(/sbin/zpool status "$POOL_NAME" 2>/dev/null || true)
+mdstat_raw=$(cat /proc/mdstat 2>/dev/null || true)
+
+REBUILD_CANDIDATE_DEV=""
+REBUILD_CANDIDATE_DISK=""
+REBUILDING_DEV=""
+REBUILDING_DISK=""
+REBUILDING_COUNT=0
+FAILED_COUNT=0
+EMPTY_DISKS=()
+
+REBUILD_PCT=$(python3 - << 'EOF'
+import subprocess, re
+
+mdstat = ""
+try:
+    with open("/proc/mdstat", "r") as f:
+        mdstat = f.read()
+except Exception:
+    pass
+
+m0 = re.search(r'md0\s*:[\s\S]*?(recovery|resync)\s*=\s*([0-9\.]+)%', mdstat)
+m1 = re.search(r'md1\s*:[\s\S]*?(recovery|resync)\s*=\s*([0-9\.]+)%', mdstat)
+
+if m0:
+    pct0 = float(m0.group(2))
+    print(f"{pct0 * 0.862:.1f}%")
+elif m1:
+    pct1 = float(m1.group(2))
+    print(f"{86.2 + (pct1 * 0.138):.1f}%")
+else:
+    try:
+        res = subprocess.run(['/sbin/zpool', 'status', 'storage'], capture_output=True, text=True)
+        if "resilver in progress" in res.stdout:
+            mz = re.search(r'([0-9\.]+)%\s*done', res.stdout)
+            if mz:
+                print(f"{mz.group(1)}%")
+    except Exception:
+        pass
+EOF
+)
+
+if [ -z "$REBUILD_PCT" ]; then
+    for md in md0 md1; do
+        if ls /sys/block/$md/md/dev-*/state 2>/dev/null | xargs grep -q "spare" 2>/dev/null; then
+            REBUILD_PCT="syncing"
+            break
+        fi
+    done
+fi
+
+for p in "${sorted_bays[@]}"; do
+    disk_label="${DISK_MAP[$p]}"
+    link_path="/dev/disk/by-path/$p"
+    if [ -L "$link_path" ]; then
+        dev_name=$(basename "$(readlink -f "$link_path")")
+        dev_path="/dev/$dev_name"
+        dev_part1="${dev_path}1"
+        dev_part2="${dev_path}2"
+        dev_part3="${dev_path}3"
+        dev_part4="${dev_path}4"
+
+        size=$(lsblk -d -n -o SIZE "$dev_path" 2>/dev/null || echo "N/A")
+        model=$(lsblk -d -n -o MODEL "$dev_path" 2>/dev/null || echo "N/A")
+        serial=$(lsblk -d -n -o SERIAL "$dev_path" 2>/dev/null || echo "N/A")
+
+        status_text="${GREEN}ONLINE${NC}"
+        is_failed=0
+        is_rebuilding=0
+
+        # Check if this disk is actively rebuilding
+        for md in md0 md1; do
+            if [ -f "/sys/block/$md/md/dev-${dev_name}2/state" ]; then
+                if grep -q "spare" "/sys/block/$md/md/dev-${dev_name}2/state" 2>/dev/null; then
+                    is_rebuilding=1
+                fi
+            fi
+            if [ -f "/sys/block/$md/md/dev-${dev_name}3/state" ]; then
+                if grep -q "spare" "/sys/block/$md/md/dev-${dev_name}3/state" 2>/dev/null; then
+                    is_rebuilding=1
+                fi
+            fi
+        done
+
+        if echo "$zfs_status_raw" | grep -q "resilver in progress"; then
+            if echo "$zfs_status_raw" | grep -q "${dev_name}4"; then
+                if echo "$zfs_status_raw" | grep -E -q "(${dev_name}4.*resilver|replacing.*${dev_name}4)"; then
+                    is_rebuilding=1
+                fi
+            fi
+        fi
+
+        if [ "$is_rebuilding" -eq 1 ]; then
+            status_text="${YELLOW}REBUILD${NC}"
+            REBUILDING_COUNT=$((REBUILDING_COUNT + 1))
+            if [ -z "$REBUILDING_DEV" ]; then
+                REBUILDING_DEV="$dev_path"
+                REBUILDING_DISK="$disk_label"
+            fi
+        else
+            # 1. Check if disk has all 4 partitions
+            if [ ! -b "$dev_part1" ] || [ ! -b "$dev_part2" ] || [ ! -b "$dev_part3" ] || [ ! -b "$dev_part4" ]; then
+                status_text="${RED}FAILED${NC}"
+                is_failed=1
+            # 2. Check Debian RAID mirror health (md0 / md1)
+            elif ! echo "$mdstat_raw" | grep -q "${dev_name}2"; then
+                status_text="${RED}FAILED${NC}"
+                is_failed=1
+            elif ! echo "$mdstat_raw" | grep -q "${dev_name}3"; then
+                status_text="${RED}FAILED${NC}"
+                is_failed=1
+            # 3. Check ZFS health (vdev line must start with exact partition name)
+            elif echo "$zfs_status_raw" | grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE)"; then
+                status_text="${RED}FAILED${NC}"
+                is_failed=1
+            elif ! echo "$zfs_status_raw" | grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+"; then
+                status_text="${RED}FAILED${NC}"
+                is_failed=1
+            fi
+        fi
+
+        if [ "$is_failed" -eq 1 ]; then
+            FAILED_COUNT=$((FAILED_COUNT + 1))
+            if [ -z "$REBUILD_CANDIDATE_DEV" ]; then
+                REBUILD_CANDIDATE_DEV="$dev_path"
+                REBUILD_CANDIDATE_DISK="$disk_label"
+            fi
+        fi
+
+        printf "%-7s %-10s %-6s %-20s %-16s " "$disk_label" "$dev_path" "$size" "${model:0:19}" "${serial:0:15}"
+        echo -e "$status_text"
+    else
+        printf "%-7s %-10s %-6s %-20s %-16s ${RED}%s${NC}\n" "$disk_label" "[EMPTY]" "-" "-" "-" "NO DISK"
+        EMPTY_DISKS+=("$disk_label")
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+    fi
+done
+
+echo -e "------------------------------------------------------------------------------"
+
+# ZFS Pool Capacity & Usage Summary
+if [ -n "$zfs_status_raw" ]; then
+    zfs_space=$(python3 - << EOF
+import subprocess
+try:
+    res_p = subprocess.run(['/sbin/zfs', 'list', '-Hp', '-o', 'used,avail', '$POOL_NAME'], capture_output=True, text=True)
+    res_h = subprocess.run(['/sbin/zfs', 'list', '-H', '-o', 'used,avail', '$POOL_NAME'], capture_output=True, text=True)
+    if res_p.returncode == 0 and res_h.returncode == 0:
+        u_b, a_b = [int(x) for x in res_p.stdout.strip().split()]
+        t_b = u_b + a_b
+        u_h, a_h = res_h.stdout.strip().split()
+        t_h = f"{t_b / (1024**4):.1f}T"
+        u_pct = f"{(u_b / t_b) * 100:.1f}%"
+        a_pct = f"{(a_b / t_b) * 100:.1f}%"
+        print(f"{t_h} {u_h} {u_pct} {a_h} {a_pct}")
+except Exception:
+    pass
+EOF
+)
+    if [ -n "$zfs_space" ]; then
+        read -r t_size u_size u_pct a_size a_pct <<< "$zfs_space"
+        printf "%-7s %-10s %-6s  %-24s %s\n" "POOL" "$POOL_NAME" "$t_size" "USED: $u_size ($u_pct)" "FREE: $a_size ($a_pct)"
+        echo -e "------------------------------------------------------------------------------"
+    fi
+fi
+zfs_dead=0
+if echo "$zfs_status_raw" | grep -q -E "state:\s*(FAULTED|UNAVAIL)"; then
+    zfs_dead=1
+fi
+
+if [ "$FAILED_COUNT" -ge 2 ] || [ "$zfs_dead" -eq 1 ]; then
+    echo -e "${RED}${BOLD}STATUS: Critical failure on 2+ disks. ZFS unrecoverable.${NC}"
+    echo -e "${RED}${BOLD}        After replacing disks, run: rebuild --init-storage${NC}"
+elif [ -n "$REBUILD_CANDIDATE_DEV" ]; then
+    disk_num="${REBUILD_CANDIDATE_DISK#Disk }"
+    echo -e "${RED}${BOLD}STATUS: Disk failure on $REBUILD_CANDIDATE_DISK. Run: rebuild $disk_num${NC}"
+elif [ ${#EMPTY_DISKS[@]} -gt 0 ]; then
+    echo -e "${YELLOW}${BOLD}STATUS: No disk in ${EMPTY_DISKS[*]}. Insert replacement disk to proceed.${NC}"
+elif [ "$REBUILDING_COUNT" -gt 0 ]; then
+    pct_info=" (syncing)"
+    if [ -n "$REBUILD_PCT" ]; then
+        pct_info=" (${REBUILD_PCT})"
+    fi
+    echo -e "${YELLOW}${BOLD}STATUS: Rebuilding in progress on $REBUILDING_DISK${pct_info}.${NC}"
+else
+    echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized in ZFS and Debian.${NC}"
+fi
+echo -e "${CYAN}==============================================================================${NC}"

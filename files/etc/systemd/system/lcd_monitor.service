@@ -1,0 +1,14 @@
+[Unit]
+Description=Terastation LCD Status and ZFS Health Monitor
+After=micon_boot.service zfs-mount.service
+Wants=micon_boot.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/local/bin/micon_scripts/micon_lcd_monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
