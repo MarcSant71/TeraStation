@@ -95,6 +95,10 @@ else:
             mz = re.search(r'([0-9\.]+)%\s*done', res.stdout)
             if mz:
                 print(f"{mz.group(1)}%")
+        elif "scrub in progress" in res.stdout:
+            mz = re.search(r'([0-9\.]+)%\s*done', res.stdout)
+            if mz:
+                print(f"{float(mz.group(1)):.1f}%")
     except Exception:
         pass
 EOF
@@ -255,6 +259,12 @@ elif [ "$REBUILDING_COUNT" -gt 0 ]; then
         pct_info=" (${REBUILD_PCT})"
     fi
     echo -e "${YELLOW}${BOLD}STATUS: Rebuilding in progress on $REBUILDING_DISK${pct_info}.${NC}"
+elif echo "$zfs_status_raw" | grep -q "scrub in progress"; then
+    pct_info=" (syncing)"
+    if [ -n "$REBUILD_PCT" ]; then
+        pct_info=" (${REBUILD_PCT})"
+    fi
+    echo -e "${YELLOW}${BOLD}STATUS: Pool maintenance (scrub) in progress${pct_info}.${NC}"
 else
     echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized in ZFS and Debian.${NC}"
 fi

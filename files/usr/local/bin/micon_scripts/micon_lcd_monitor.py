@@ -187,7 +187,7 @@ def check_rebuild_progress(pool_name="storage"):
     except Exception:
         pass
 
-    # 2. Check ZFS resilver
+    # 2. Check ZFS resilver or maintenance scrub
     try:
         res = subprocess.run(
             ['/sbin/zpool', 'status', pool_name],
@@ -201,6 +201,20 @@ def check_rebuild_progress(pool_name="storage"):
             title = f" REBUILD: DISK {target_disk}" if target_disk else "   REBUILDING   "
             detail = f"PROGRESS: {pct:<6}"
             return True, title[:16], detail[:16]
+        elif "scrub in progress" in res.stdout:
+            # Only report maintenance if no drives have faulted
+            if "FAULTED" not in res.stdout and "UNAVAIL" not in res.stdout:
+                m = re.search(r'([0-9\.]+)%\s*done', res.stdout)
+                if m:
+                    try:
+                        pct = f"{float(m.group(1)):.1f}%"
+                    except ValueError:
+                        pct = f"{m.group(1)}%"
+                else:
+                    pct = "IN PROG"
+                title = "   POOL SCRUB   "
+                detail = f"PROGRESS: {pct:<6}"
+                return True, title[:16], detail[:16]
     except Exception:
         pass
 
