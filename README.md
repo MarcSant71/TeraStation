@@ -59,7 +59,7 @@ Compared to vanilla Debian or generic NAS distributions, this suite introduces t
   2. Scheduled ZFS maintenance scrubs (defaulted to the second Sunday of the month in Debian) cause sustained background disk I/O without any front-panel notification, leaving users unsure why storage latency increased.
 * **The Solution:** 
   * **Linear Rebuild:** A weighted linear algorithm computes a continuous progress bar from 0.0% to 100.0%, maintaining strict vertical alignment of the colons (`:`) on the 16x2 character display.
-  * **Live Scrub Monitoring:** Detects active ZFS pool scrubs (`zpool scrub`), automatically illuminates the LCD backlight in **Solid Amber**, turns ON the chassis Info LED, and streams live percentage completion (`POOL SCRUB / PROGRESS: XX.X%`). Disables false alarms while immediately escalating to Red Alert if any drive fails.
+  * **Live Scrub Monitoring:** Detects active ZFS pool scrubs (`zpool scrub`), automatically illuminates the LCD backlight in **Solid Amber**, turns ON the chassis Info LED, sounds a discreet start chime, and streams live percentage completion (`POOL SCRUB / PROGRESS: XX.X%`). Emits a completion chime and restores the healthy carousel upon finish. Disables false alarms while immediately escalating to Red Alert if any drive fails.
 
 ### 3. Instant Early Kernel/Initramfs Splash Screen
 * **The Solution:** An initramfs-tools hook (`/etc/initramfs-tools/hooks/terastation_lcd` and `scripts/init-top/terastation_lcd`) runs at second 1 of the Linux kernel (right after BIOS handoff), lighting the LCD in **Solid Aqua/White (`0x07`)** with `TeraStation / Loading OS...`. Decreases GRUB timeout to 1 second for ultra-fast boot transition.
@@ -119,12 +119,12 @@ Below are the ASCII representations of the front LCD display screens managed by 
 +----------------+     +----------------+  Date/IP every 5 seconds)
 
 ================================================================================
-4. Monotonic Disk Rebuild & Pool Scrub - Backlight: SOLID AMBER (0x03)
+4. Monotonic Disk Rebuild & Pool Scrub - Backlight: SOLID AMBER (0x03) + CHIME
 ================================================================================
 +----------------+     +----------------+
 |  REBUILD: DISK3|     |   POOL SCRUB   |  (Continuous real-time progress;
-| PROGRESS: 47.8%| <-> | PROGRESS: 49.4%|   Amber Info LED ON, Error LED OFF;
-+----------------+     +----------------+   Non-destructive maintenance status)
+| PROGRESS: 47.8%| <-> | PROGRESS: 49.4%|   Emits chime on start and completion;
++----------------+     +----------------+   Amber Info LED ON, Error LED OFF)
 
 ================================================================================
 5. Critical Hardware Alarm - Backlight: BLINKING RED (0x01) + AUDIBLE BUZZER
