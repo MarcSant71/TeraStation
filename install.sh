@@ -80,6 +80,13 @@ cp -a "${FILES_DIR}/etc/modules" /etc/modules
 cp -a "${FILES_DIR}/etc/sensors.d/it8721.conf" /etc/sensors.d/it8721.conf
 cp -a "${FILES_DIR}/etc/modprobe.d/zfs.conf" /etc/modprobe.d/zfs.conf
 
+# Agendamento trimestral de integridade ZFS
+if [ -f "${FILES_DIR}/etc/cron.d/zfsutils-linux" ]; then
+    mkdir -p /etc/cron.d
+    cp -a "${FILES_DIR}/etc/cron.d/zfsutils-linux" /etc/cron.d/zfsutils-linux
+    chmod 644 /etc/cron.d/zfsutils-linux
+fi
+
 # Hook de LCD instantaneo no initramfs
 if [ -f "${FILES_DIR}/etc/initramfs-tools/hooks/terastation_lcd" ]; then
     mkdir -p /etc/initramfs-tools/hooks /etc/initramfs-tools/scripts/init-top

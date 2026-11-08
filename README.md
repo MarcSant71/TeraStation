@@ -56,10 +56,10 @@ Compared to vanilla Debian or generic NAS distributions, this suite introduces t
 ### 2. Monotonic Rebuild & Background Maintenance Scrub on LCD
 * **The Problem:** 
   1. Because Debian mirrors the OS across all drives using two software RAID slices (`md0` rootfs ~86% and `md1` swap ~14%), the stock LCD monitor counted from 0% to 100% on root and then abruptly reset to 0% for swap, giving users the false impression that resync failed or restarted.
-  2. Scheduled ZFS maintenance scrubs (defaulted to the second Sunday of the month in Debian) cause sustained background disk I/O without any front-panel notification, leaving users unsure why storage latency increased.
+  2. Vanilla Debian defaults ZFS maintenance scrubs to every month, creating unnecessary mechanical wear on 8-drive arrays, while lacking any front-panel notification.
 * **The Solution:** 
   * **Linear Rebuild:** A weighted linear algorithm computes a continuous progress bar from 0.0% to 100.0%, maintaining strict vertical alignment of the colons (`:`) on the 16x2 character display.
-  * **Live Scrub Monitoring:** Detects active ZFS pool scrubs (`zpool scrub`), automatically illuminates the LCD backlight in **Solid Amber**, turns ON the chassis Info LED, sounds a discreet start chime, and streams live percentage completion (`POOL SCRUB / PROGRESS: XX.X%`). Emits a completion chime and restores the healthy carousel upon finish. Disables false alarms while immediately escalating to Red Alert if any drive fails.
+  * **Quarterly Scrub Cadence & Live Monitoring:** Replaces Debian's aggressive monthly schedule with an enterprise quarterly cadence (`/etc/cron.d/zfsutils-linux` set to February, May, August, November), reducing annual disk wear by 66%. Detects active ZFS pool scrubs (`zpool scrub`), automatically illuminates the LCD backlight in **Solid Amber**, turns ON the chassis Info LED, sounds a discreet start chime, and streams live percentage completion (`POOL SCRUB / PROGRESS: XX.X%`). Emits a completion chime and restores the healthy carousel upon finish. Disables false alarms while immediately escalating to Red Alert if any drive fails.
 
 ### 3. Instant Early Kernel/Initramfs Splash Screen
 * **The Solution:** An initramfs-tools hook (`/etc/initramfs-tools/hooks/terastation_lcd` and `scripts/init-top/terastation_lcd`) runs at second 1 of the Linux kernel (right after BIOS handoff), lighting the LCD in **Solid Aqua/White (`0x07`)** with `TeraStation / Loading OS...`. Decreases GRUB timeout to 1 second for ultra-fast boot transition.
