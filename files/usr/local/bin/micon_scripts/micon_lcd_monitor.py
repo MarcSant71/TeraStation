@@ -728,6 +728,9 @@ def main():
                         micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x00, 0x00]))
                         micon.send_write_cmd(2, libmicon.CMD_LED_ONOFF, bytearray([0x02, 0x03]))
 
+                        # Notification beep on entering Rebuild or Maintenance Scrub
+                        micon.cmd_sound(libmicon.BZ_BUTTON)
+
                         last_force_buffer0 = now
                         last_applied_state = STATE_REBUILDING
 
