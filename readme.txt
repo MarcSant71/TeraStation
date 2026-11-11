@@ -1,5 +1,5 @@
 ================================================================================
-BUFFALO TERASTATON TS5800D - QUICK DISASTER RECOVERY GUIDE
+BUFFALO TERASTATION TS5800D - QUICK DISASTER RECOVERY GUIDE
 Developer: Marcelo Santos - ActionSys (MarcSant71)
 GitHub Repository: https://github.com/MarcSant71/TeraStation
 Package Location: W:\Projetos\Pessoal\Storage_TeraStation
@@ -41,6 +41,7 @@ The 'install.sh' script automatically applies:
 - Power button double-press safety protection (HandlePowerKey=ignore) with 6s timer
 - Automatic disabling of redundant background services (smartmontools, zfs-zed, fancontrol, etc)
 - ZFS ARC memory ceiling at 1.2 GB (/etc/modprobe.d/zfs.conf)
+- Quarterly ZFS maintenance scrub schedule (/etc/cron.d/zfsutils-linux)
 - Thermal sensors and GPIO kernel drivers (/etc/modules, /etc/sensors.d/)
 - Passwordless sudoers rules (/etc/sudoers.d/)
 - Persistent LIO iSCSI Target LUN with UNMAP/TRIM and BUFFALO Storage identification

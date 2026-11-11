@@ -5,7 +5,7 @@
 [![Storage](https://img.shields.io/badge/Storage-OpenZFS%20%2B%20LIO%20iSCSI-orange.svg)](https://openzfs.org/)
 [![License](https://img.shields.io/badge/License-GPL%20v2%20%2F%20MIT-green.svg)](LICENSE)
 
-An enterprise engineering suite, stability enhancements, disk management tools, and hardware customizations designed to transform the **Buffalo TeraStation Intel x86_64** appliance family into a resilient, high-performance SAN running **vanilla Debian 12 Bookworm**, OpenZFS, and LIO iSCSI Target.
+An enterprise engineering suite, stability enhancements, disk management tools, and hardware customizations designed to transform the **Buffalo TeraStation Intel x86_64** appliance family into a resilient, high-performance NAS running **vanilla Debian 12 Bookworm**, OpenZFS, and LIO iSCSI Target.
 
 ---
 
@@ -75,7 +75,7 @@ Compared to vanilla Debian or generic NAS distributions, this suite introduces t
 * Disabled open demo mode (`generate_node_acls=0`) and mapped the LUN exclusively to the authorized host initiator IQN. Blocks unauthorized network devices from connecting concurrently, eliminating the risk of NTFS filesystem corruption over shared block storage.
 
 ### 7. Guided Disk Management Utilities (`status` and `rebuild`)
-* **/usr/local/sbin/status:** Displays an interactive visual grid of the drive bays, showing serial numbers, individual SMART temperatures, `md0`/`md1` OS mirrors, and ZFS pool health. Automatically senses the motherboard's physical SATA port count (dynamically adapting between 2, 4, 6, and 8-bay appliances) and distinguishes intentionally empty bays (`UNPOPULATED`) from true drive failures (`NO DISK`).
+* **/usr/local/sbin/status:** Displays an interactive visual grid of the drive bays, showing drive models, serial numbers, capacity, OS mirrors (`md0`/`md1`), and ZFS pool health. Automatically senses the motherboard's physical SATA port count (dynamically adapting between 2, 4, 6, and 8-bay appliances) and distinguishes intentionally empty bays (`UNPOPULATED`) from true drive failures (`NO DISK`).
 * **/usr/local/sbin/rebuild:** Automated disk replacement tool that clones the factory MBR partition table, synchronizes OS mirrors, reintegrates the data slice into ZFS, and installs GRUB across all drive MBRs to guarantee boot redundancy from any bay.
 
 ### 8. Surgical ZFS ARC Memory Calibration for 2 GB RAM
@@ -162,6 +162,7 @@ Below are the ASCII representations of the front LCD display screens managed by 
 ├── terastation_customizations.tar.gz# Compressed archive for instant offline deployment
 └── files/
     ├── etc/
+    │   ├── cron.d/                  # Quarterly ZFS maintenance scrub cadence
     │   ├── default/grub             # 1-second timeout for rapid booting
     │   ├── initramfs-tools/         # Early splash display hook
     │   ├── modules                  # Kernel modules (it87ts, gpio-ich, gpio-it87)
@@ -206,7 +207,7 @@ The script will automatically execute:
 * Install `status` and `rebuild` utilities into `/usr/local/sbin`.
 * Configure the LCD daemon, power button safety machine, and shutdown hooks.
 * Inject the early boot splash into `initramfs` and update GRUB.
-* Apply ZFS ARC memory optimizations and SuperIO sensor configs.
+* Apply ZFS ARC memory optimizations, quarterly scrub schedule, and SuperIO configs.
 * Restore LIO iSCSI Target configuration with custom `BUFFALO Storage` identification.
 
 ### Step 4: Start Services & Reconnect Storage

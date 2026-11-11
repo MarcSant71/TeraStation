@@ -19,7 +19,7 @@ if [ ! -d "${FILES_DIR}" ]; then
 fi
 
 echo "================================================================================"
-echo "  RESTAURADOR DE CUSTOMIZACOES DO TERASTATON TS5800D (Debian 12 Bookworm)"
+echo "  RESTAURADOR DE CUSTOMIZACOES DO TERASTATION TS5800D (Debian 12 Bookworm)"
 echo "  Desenvolvedor: Marcelo Santos - ActionSys"
 echo "================================================================================"
 echo ""
