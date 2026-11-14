@@ -438,7 +438,7 @@ def determine_storage_state(pool_name="storage"):
             t_str = f"REBUILD1: DISK {d_str}" if d_str.isdigit() else "REBUILD1: RAID  "
         except Exception:
             t_str = "REBUILD1: RAID  "
-        return STATE_REBUILDING, t_str[:16], f"PROGRESS: {'QUEUED':<6}"[:16]
+        return STATE_REBUILDING, t_str[:16], "PROGRESS: 0.0%  "
 
     # 2. Check for ZFS faults when no ZFS resilver is actively running
     zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name)
