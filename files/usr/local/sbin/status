@@ -264,7 +264,7 @@ elif [ -n "$REBUILD_CANDIDATE_DEV" ]; then
     disk_num="${REBUILD_CANDIDATE_DISK#Disk }"
     echo -e "${RED}${BOLD}STATUS: Disk failure on $REBUILD_CANDIDATE_DISK. Run: rebuild $disk_num${NC}"
 elif [ ${#EMPTY_DISKS[@]} -gt 0 ]; then
-    echo -e "${YELLOW}${BOLD}STATUS: No disk in ${EMPTY_DISKS[*]}. Insert replacement disk to proceed.${NC}"
+    echo -e "${YELLOW}${BOLD}STATUS: No disk in ${EMPTY_DISKS[*]/#Disk /Bay }. Insert replacement disk to proceed.${NC}"
 elif [ "$REBUILDING_COUNT" -gt 0 ]; then
     pct_info=" (syncing)"
     if [ -n "$REBUILD_PCT" ]; then
