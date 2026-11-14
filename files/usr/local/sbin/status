@@ -199,7 +199,7 @@ for p in "${sorted_bays[@]}"; do
         if echo "$mdstat_raw" | grep -q "\[_"; then
             is_missing_member=1
         fi
-        if echo "$zfs_status_raw" | grep -iE "(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)"; then
+        if grep -qiE "(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)" <<< "$zfs_status_raw"; then
             is_missing_member=1
         fi
 

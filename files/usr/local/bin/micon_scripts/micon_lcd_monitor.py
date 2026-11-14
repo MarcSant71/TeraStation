@@ -273,8 +273,8 @@ def check_zfs_health(pool_name="storage"):
             return True, "ONLINE", ""
         else:
             if faulted_disks:
-                nums = [str(get_disk_number(d)) for d in faulted_disks if get_disk_number(d)]
-                nums_str = ",".join(nums) if nums else ",".join(faulted_disks)
+                nums = list(dict.fromkeys(str(get_disk_number(d)) for d in faulted_disks if get_disk_number(d)))
+                nums_str = ",".join(nums) if nums else ",".join(dict.fromkeys(faulted_disks))
                 return False, state, f"FAIL: DISK {nums_str}"[:16]
             return False, state, f"STATE: {state}"[:16]
 
