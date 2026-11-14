@@ -348,21 +348,60 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "yes" && "$CONFIRM" != "s" && "$CONFIRM
 fi
 
 echo ""
+SPINNER_PID=""
+STEP_PREFIX=""
+
+stop_spinner() {
+    if [ -n "$SPINNER_PID" ]; then
+        kill "$SPINNER_PID" >/dev/null 2>&1 || true
+        wait "$SPINNER_PID" >/dev/null 2>&1 || true
+        SPINNER_PID=""
+    fi
+}
+trap stop_spinner EXIT INT TERM
+
 step_start() {
     local msg="$1"
     local pad=$((69 - ${#msg}))
     [ "$pad" -lt 3 ] && pad=3
     local dots
     dots=$(printf '%*s' "$pad" '' | tr ' ' '.')
-    printf "%s %s " "$msg" "$dots"
+    STEP_PREFIX="${msg} ${dots} "
+
+    stop_spinner
+    if [ -t 1 ]; then
+        printf "\r%s[ ${CYAN}|${NC} ]" "$STEP_PREFIX"
+        (
+            local frames=('|' '/' '-' '\')
+            local i=0
+            while true; do
+                printf "\r%s[ ${CYAN}%s${NC} ]" "$STEP_PREFIX" "${frames[$i]}"
+                i=$(( (i + 1) % 4 ))
+                sleep 0.15
+            done
+        ) &
+        SPINNER_PID=$!
+    else
+        printf "%s" "$STEP_PREFIX"
+    fi
 }
 
 step_ok() {
-    echo -e "[ ${GREEN}OK${NC} ]"
+    stop_spinner
+    if [ -t 1 ]; then
+        printf "\r%s[ ${GREEN}OK${NC} ]\n" "$STEP_PREFIX"
+    else
+        echo -e "[ ${GREEN}OK${NC} ]"
+    fi
 }
 
 step_fail() {
-    echo -e "[${RED}FAIL${NC}]"
+    stop_spinner
+    if [ -t 1 ]; then
+        printf "\r%s[${RED}FAIL${NC}]\n" "$STEP_PREFIX"
+    else
+        echo -e "[${RED}FAIL${NC}]"
+    fi
     [ -n "${1:-}" ] && echo -e "${RED}  $1${NC}"
     exit 1
 }
