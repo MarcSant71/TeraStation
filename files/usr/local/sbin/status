@@ -156,6 +156,16 @@ for p in "${sorted_bays[@]}"; do
             fi
         fi
 
+        # Do not report REBUILD if ZFS vdev is faulted/unavail without active resilvering (unless rebuild script is running)
+        if [ ! -f "/run/terastation_rebuild_in_progress" ]; then
+            if grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE)" <<< "$zfs_status_raw" || \
+               ! grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+" <<< "$zfs_status_raw"; then
+                if ! grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+ONLINE.*\(resilvering\)" <<< "$zfs_status_raw"; then
+                    is_rebuilding=0
+                fi
+            fi
+        fi
+
         if [ "$is_rebuilding" -eq 1 ]; then
             status_text="${YELLOW}REBUILD${NC}"
             REBUILDING_COUNT=$((REBUILDING_COUNT + 1))
