@@ -289,7 +289,8 @@ fi
 CLEAN_DEV=$(basename "$TARGET_DEV")
 
 TARGET_DISK=$(get_disk_for_dev "$TARGET_DEV")
-TARGET_SIZE=$(lsblk -d -n -o SIZE "$TARGET_DEV" 2>/dev/null || echo "N/A")
+TARGET_SIZE=$(lsblk -d -n -o SIZE "$TARGET_DEV" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)
+TARGET_SIZE="${TARGET_SIZE:-N/A}"
 TARGET_MODEL=$(lsblk -d -n -o MODEL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 TARGET_SERIAL=$(lsblk -d -n -o SERIAL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 
