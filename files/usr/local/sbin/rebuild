@@ -295,6 +295,17 @@ TARGET_SIZE=$(lsblk -d -n -o SIZE "$TARGET_DEV" 2>/dev/null || echo "N/A")
 TARGET_MODEL=$(lsblk -d -n -o MODEL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 TARGET_SERIAL=$(lsblk -d -n -o SERIAL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 
+# Safeguard: refuse to wipe a disk that is already 100% healthy in all arrays
+mdstat_check=$(cat /proc/mdstat 2>/dev/null || true)
+zfs_check=$(/sbin/zpool status "$POOL_NAME" 2>/dev/null || true)
+if echo "$mdstat_check" | grep -q -E "${CLEAN_DEV}2\[[0-9]+\]($| )" && \
+   echo "$mdstat_check" | grep -q -E "${CLEAN_DEV}3\[[0-9]+\]($| )" && \
+   echo "$zfs_check" | grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+ONLINE"; then
+    echo -e "\n${GREEN}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is already 100% ONLINE and synchronized in md0, md1, and ZFS.${NC}"
+    echo -e "Refusing to wipe a healthy disk. Run ${BOLD}status${NC} to identify the actual failed bay."
+    exit 1
+fi
+
 echo -e "\n${CYAN}==========================================================${NC}"
 echo -e "${YELLOW}${BOLD}              WARNING - DISK REBUILD PROCESS              ${NC}"
 echo -e "${CYAN}==========================================================${NC}"
@@ -303,13 +314,15 @@ echo -e "  Model       : $TARGET_MODEL"
 echo -e "  Serial      : $TARGET_SERIAL"
 echo -e "  Size        : $TARGET_SIZE"
 
-# Locate a healthy donor disk to clone partition table from
+# Locate a healthy active donor disk to clone partition table from
 SOURCE_DISK=""
 for d in sda sdb sdc sdd sde sdf sdg sdh; do
     if [ "$d" != "$CLEAN_DEV" ] && [ -b "/dev/$d" ]; then
         if [ -b "/dev/${d}1" ] && [ -b "/dev/${d}2" ] && [ -b "/dev/${d}3" ] && [ -b "/dev/${d}4" ]; then
-            SOURCE_DISK="/dev/$d"
-            break
+            if [ -z "$mdstat_check" ] || echo "$mdstat_check" | grep -q "${d}2\["; then
+                SOURCE_DISK="/dev/$d"
+                break
+            fi
         fi
     fi
 done
@@ -331,24 +344,43 @@ fi
 
 echo ""
 # ------------------------------------------------------------------------------
-# Step 1: Ensure GPT partition table exists
+# Step 1: Wipe residual metadata and clone GPT partition table
 # ------------------------------------------------------------------------------
-echo -e "${BOLD}[1/5] Checking and syncing partition table on $TARGET_DEV...${NC}"
-if [ ! -b "${TARGET_DEV}1" ] || [ ! -b "${TARGET_DEV}2" ] || [ ! -b "${TARGET_DEV}3" ] || [ ! -b "${TARGET_DEV}4" ]; then
-    echo -e "  Cloning partition table from $SOURCE_DISK..."
-    sfdisk -d "$SOURCE_DISK" | sfdisk --force "$TARGET_DEV" >/dev/null 2>&1
-    sgdisk -G "$TARGET_DEV" >/dev/null 2>&1
-    blockdev --rereadpt "$TARGET_DEV" 2>/dev/null || true
-    udevadm settle
-    sleep 2
-else
-    echo -e "  Partitions already exist on disk, preserving structure."
-fi
+echo -e "${BOLD}[1/5] Wiping residual metadata and cloning partition table on $TARGET_DEV...${NC}"
+for part in "${TARGET_DEV}"[0-9]*; do
+    if [ -b "$part" ]; then
+        mdadm --manage /dev/md0 --fail "$part" >/dev/null 2>&1 || true
+        mdadm --manage /dev/md0 --remove "$part" >/dev/null 2>&1 || true
+        mdadm --manage /dev/md1 --fail "$part" >/dev/null 2>&1 || true
+        mdadm --manage /dev/md1 --remove "$part" >/dev/null 2>&1 || true
+        zpool labelclear -f "$part" >/dev/null 2>&1 || true
+        mdadm --zero-superblock "$part" >/dev/null 2>&1 || true
+        wipefs -a "$part" >/dev/null 2>&1 || true
+    fi
+done
+zpool labelclear -f "$TARGET_DEV" >/dev/null 2>&1 || true
+mdadm --zero-superblock "$TARGET_DEV" >/dev/null 2>&1 || true
+wipefs -a "$TARGET_DEV" >/dev/null 2>&1 || true
+sgdisk --zap-all "$TARGET_DEV" >/dev/null 2>&1 || true
+
+echo -e "  Cloning partition table from $SOURCE_DISK..."
+sfdisk -d "$SOURCE_DISK" | sfdisk --force "$TARGET_DEV" >/dev/null 2>&1
+sgdisk -G "$TARGET_DEV" >/dev/null 2>&1
+blockdev --rereadpt "$TARGET_DEV" 2>/dev/null || true
+udevadm settle
+sleep 2
 
 if [ ! -b "${TARGET_DEV}2" ] || [ ! -b "${TARGET_DEV}4" ]; then
     echo -e "${RED}[ERROR] Failed to verify partitions on $TARGET_DEV!${NC}"
     exit 1
 fi
+
+# Clear any stale RAID/ZFS superblocks aligned with the newly created partitions
+for pnum in 2 3 4; do
+    zpool labelclear -f "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
+    mdadm --zero-superblock "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
+    wipefs -a "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
+done
 echo -e "${GREEN}  -> [OK] GPT partition table verified successfully.${NC}"
 
 # ------------------------------------------------------------------------------
