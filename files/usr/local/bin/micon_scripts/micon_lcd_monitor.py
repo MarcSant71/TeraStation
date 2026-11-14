@@ -95,17 +95,32 @@ SYS_TITLE = ("TeraStation " + platform.machine()[:3].upper()).center(16)[:16]
 SYS_VERSION = _deb_ver.center(16)[:16]
 
 
+_DISK_NUM_CACHE = {}
+
+
 def get_disk_number(dev_name):
     """
     Resolves a linux device name (e.g. sda, sda2, /dev/sdb) to its physical Disk Number (1-8).
+    Caches active mappings so a freshly unplugged device still maps to its physical bay.
     """
     target = os.path.basename(dev_name)
     target = re.sub(r'[0-9]+$', '', target)
+    empty_bays = []
     for disk_num, p_id, _ in BAYS:
         link_path = f"/dev/disk/by-path/{p_id}"
         if os.path.islink(link_path):
-            if os.path.basename(os.path.realpath(link_path)) == target:
+            real_dev = os.path.basename(os.path.realpath(link_path))
+            _DISK_NUM_CACHE[real_dev] = disk_num
+            if real_dev == target:
                 return disk_num
+        else:
+            empty_bays.append(disk_num)
+
+    cached = _DISK_NUM_CACHE.get(target)
+    if cached in empty_bays:
+        return cached
+    if len(empty_bays) == 1:
+        return empty_bays[0]
     return None
 
 
@@ -356,8 +371,10 @@ def check_zfs_health(pool_name="storage"):
         else:
             if faulted_disks:
                 nums = list(dict.fromkeys(str(get_disk_number(d)) for d in faulted_disks if get_disk_number(d)))
-                nums_str = ",".join(nums) if nums else ",".join(dict.fromkeys(faulted_disks))
-                return False, state, f"FAIL: DISK {nums_str}"[:16]
+                if not nums:
+                    nums = [str(dn) for dn, pid, _ in BAYS if not os.path.islink(f"/dev/disk/by-path/{pid}")]
+                if nums:
+                    return False, state, f"FAIL: DISK {','.join(nums)}"[:16]
             return False, state, f"STATE: {state}"[:16]
 
     except Exception as e:
@@ -397,8 +414,8 @@ def check_mdstat_health():
         for d in ["sda", "sdb", "sdc", "sdd", "sde", "sdf", "sdg", "sdh"]:
             if f"{d}2" not in content:
                 d_num = get_disk_number(d)
-                tag = f"DISK {d_num}" if d_num else d
-                return False, f"FAIL: {tag}"[:16]
+                if d_num:
+                    return False, f"FAIL: DISK {d_num}"[:16]
 
         return False, "FAIL: MD DEGRADED"
     except Exception:
