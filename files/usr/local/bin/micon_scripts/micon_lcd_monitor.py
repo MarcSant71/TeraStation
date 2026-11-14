@@ -120,89 +120,8 @@ def get_ip_address():
         return "192.168.68.15"
 
 
-def check_rebuild_progress(pool_name="storage"):
-    """
-    Checks if ZFS or MDADM is actively rebuilding/resyncing.
-    Returns (is_rebuilding, title_line, detail_line)
-    """
-    target_disk = None
-
-    # Check sysfs for spare / rebuilding devices to identify target disk
-    for md_name in ["md0", "md1"]:
-        md_dir = f"/sys/block/{md_name}/md"
-        if os.path.exists(md_dir):
-            for dev_entry in os.listdir(md_dir):
-                if dev_entry.startswith("dev-"):
-                    st_file = os.path.join(md_dir, dev_entry, "state")
-                    if os.path.exists(st_file):
-                        try:
-                            with open(st_file, "r") as sf:
-                                if "spare" in sf.read():
-                                    d_name = dev_entry.replace("dev-", "")
-                                    d_num = get_disk_number(d_name)
-                                    if d_num:
-                                        target_disk = d_num
-                                    # Ensure md array is read-write so kernel triggers rebuild on swap/read-auto arrays
-                                    arr_st_file = os.path.join(md_dir, "array_state")
-                                    if os.path.exists(arr_st_file):
-                                        try:
-                                            with open(arr_st_file, "r") as af:
-                                                if af.read().strip() in ["read-auto", "auto-read-only"]:
-                                                    subprocess.run(["/sbin/mdadm", "--readwrite", f"/dev/{md_name}"], timeout=2)
-                                        except Exception:
-                                            pass
-                                    break
-                        except Exception:
-                            pass
-            if target_disk:
-                break
-
-    # 1. Check MDADM resync / recovery
-    try:
-        with open("/proc/mdstat", "r") as f:
-            md_text = f.read()
-
-        b0 = re.search(r"^md0\s*:.*?(?=\n\s*\n|\Z)", md_text, re.MULTILINE | re.DOTALL)
-        b1 = re.search(r"^md1\s*:.*?(?=\n\s*\n|\Z)", md_text, re.MULTILINE | re.DOTALL)
-        m0 = re.search(r"(recovery|resync)\s*=\s*([0-9\.]+)%", b0.group(0)) if b0 else None
-        m1 = re.search(r"(recovery|resync)\s*=\s*([0-9\.]+)%", b1.group(0)) if b1 else None
-        if m0 or m1:
-            if not target_disk:
-                try:
-                    zres = subprocess.run(['/sbin/zpool', 'status', pool_name], capture_output=True, text=True, timeout=5)
-                    for zline in zres.stdout.splitlines():
-                        if "(resilvering)" in zline:
-                            zparts = zline.strip().split()
-                            if zparts and zparts[0].startswith("sd"):
-                                target_disk = get_disk_number(zparts[0])
-                                if target_disk:
-                                    break
-                except Exception:
-                    pass
-        if m0:
-            pct0 = float(m0.group(2))
-            overall_pct = pct0 * 0.862
-            title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
-            val = f"{overall_pct:.1f}%"
-            detail = f"PROGRESS: {val:<6}"
-            return True, title[:16], detail[:16]
-        elif m1:
-            pct1 = float(m1.group(2))
-            overall_pct = 86.2 + (pct1 * 0.138)
-            title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
-            val = f"{overall_pct:.1f}%"
-            detail = f"PROGRESS: {val:<6}"
-            return True, title[:16], detail[:16]
-
-        # If spare found but array is between phases / queued
-        if target_disk:
-            title = f"REBUILD1: DISK {target_disk}"
-            detail = f"PROGRESS: {'QUEUED':<6}"
-            return True, title[:16], detail[:16]
-    except Exception:
-        pass
-
-    # 2. Check ZFS resilver or maintenance scrub
+def _get_zpool_status(pool_name="storage"):
+    """Runs zpool status once and returns stdout, or empty string on error."""
     try:
         res = subprocess.run(
             ['/sbin/zpool', 'status', pool_name],
@@ -210,37 +129,146 @@ def check_rebuild_progress(pool_name="storage"):
             text=True,
             timeout=5
         )
-        if "resilver in progress" in res.stdout and "(resilvering)" in res.stdout:
-            zfs_disk = target_disk
-            if not zfs_disk:
-                for line in res.stdout.splitlines():
-                    if "(resilvering)" in line:
-                        parts = line.strip().split()
-                        if parts and parts[0].startswith("sd"):
-                            zfs_disk = get_disk_number(parts[0])
-                            if zfs_disk:
-                                break
-            m = re.search(r'([0-9\.]+)%\s*done', res.stdout)
-            pct = f"{float(m.group(1)):.1f}%" if m else "IN PROG"
-            title = f"REBUILD2: DISK {zfs_disk}" if zfs_disk else "REBUILD2: POOL  "
+        return res.stdout if res.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _read_md_sync(md_name):
+    """
+    Reads native kernel sysfs sync_action and sync_completed for an md device.
+    Returns (action, pct_float_or_None).
+    """
+    md_dir = f"/sys/block/{md_name}/md"
+    try:
+        with open(os.path.join(md_dir, "sync_action"), "r") as f:
+            action = f.read().strip()
+        if action not in ("recover", "resync"):
+            return action, None
+        with open(os.path.join(md_dir, "sync_completed"), "r") as f:
+            comp = f.read().strip()
+        if "/" in comp:
+            done_s, total_s = comp.split("/", 1)
+            done = int(done_s.strip())
+            total = int(total_s.strip())
+            if total > 0:
+                return action, (done / total) * 100.0
+        return action, None
+    except Exception:
+        return "idle", None
+
+
+def _find_target_disk(zfs_stdout="", hint_disk=None):
+    """
+    Resolves the physical Disk Number (1-8) being rebuilt from authoritative kernel/ZFS sources:
+    1. mdadm sysfs 'spare' device state
+    2. ZFS '(resilvering)' or faulted/unavail vdev
+    3. Caller-supplied hint_disk (active rebuild script lock)
+    """
+    target_disk = None
+    for md_name in ("md0", "md1"):
+        md_dir = f"/sys/block/{md_name}/md"
+        if not os.path.exists(md_dir):
+            continue
+        for dev_entry in os.listdir(md_dir):
+            if not dev_entry.startswith("dev-"):
+                continue
+            st_file = os.path.join(md_dir, dev_entry, "state")
+            if not os.path.exists(st_file):
+                continue
+            try:
+                with open(st_file, "r") as sf:
+                    if "spare" in sf.read():
+                        d_num = get_disk_number(dev_entry.replace("dev-", ""))
+                        if d_num:
+                            target_disk = d_num
+                        arr_st_file = os.path.join(md_dir, "array_state")
+                        if os.path.exists(arr_st_file):
+                            try:
+                                with open(arr_st_file, "r") as af:
+                                    if af.read().strip() in ("read-auto", "auto-read-only"):
+                                        subprocess.run(["/sbin/mdadm", "--readwrite", f"/dev/{md_name}"], timeout=2)
+                            except Exception:
+                                pass
+                        break
+            except Exception:
+                pass
+        if target_disk:
+            return target_disk
+
+    if zfs_stdout:
+        for line in zfs_stdout.splitlines():
+            if "(resilvering)" in line:
+                parts = line.strip().split()
+                if parts and parts[0].startswith("sd"):
+                    d_num = get_disk_number(parts[0])
+                    if d_num:
+                        return d_num
+        for line in zfs_stdout.splitlines():
+            m_was = re.search(r"was\s+/dev/(sd[a-z]+[0-9]*)", line)
+            if m_was:
+                d_num = get_disk_number(m_was.group(1))
+                if d_num:
+                    return d_num
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0].startswith("sd") and parts[1] in ("FAULTED", "DEGRADED", "UNAVAIL", "OFFLINE"):
+                d_num = get_disk_number(parts[0])
+                if d_num:
+                    return d_num
+
+    return hint_disk
+
+
+def check_rebuild_progress(pool_name="storage", hint_disk=None, zfs_stdout=None):
+    """
+    Checks if MDADM or ZFS is actively rebuilding/resyncing.
+    Returns (is_rebuilding, title_line, detail_line)
+    """
+    if zfs_stdout is None:
+        zfs_stdout = _get_zpool_status(pool_name)
+
+    act0, pct0 = _read_md_sync("md0")
+    act1, pct1 = _read_md_sync("md1")
+    target_disk = _find_target_disk(zfs_stdout=zfs_stdout, hint_disk=hint_disk)
+
+    # 1. Check MDADM resync / recovery via native sysfs counters
+    if pct0 is not None:
+        overall_pct = pct0 * 0.862
+        title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
+        val = f"{overall_pct:.1f}%"
+        detail = f"PROGRESS: {val:<6}"
+        return True, title[:16], detail[:16]
+    if pct1 is not None:
+        overall_pct = 86.2 + (pct1 * 0.138)
+        title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
+        val = f"{overall_pct:.1f}%"
+        detail = f"PROGRESS: {val:<6}"
+        return True, title[:16], detail[:16]
+    if act0 in ("recover", "resync") or act1 in ("recover", "resync"):
+        title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
+        detail = f"PROGRESS: {'QUEUED':<6}"
+        return True, title[:16], detail[:16]
+
+    # 2. Check ZFS resilver or maintenance scrub
+    if "resilver in progress" in zfs_stdout and "(resilvering)" in zfs_stdout:
+        m = re.search(r'([0-9\.]+)%\s*done', zfs_stdout)
+        pct = f"{float(m.group(1)):.1f}%" if m else "IN PROG"
+        title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: POOL  "
+        detail = f"PROGRESS: {pct:<6}"
+        return True, title[:16], detail[:16]
+    if "scrub in progress" in zfs_stdout:
+        if "FAULTED" not in zfs_stdout and "UNAVAIL" not in zfs_stdout:
+            m = re.search(r'([0-9\.]+)%\s*done', zfs_stdout)
+            if m:
+                try:
+                    pct = f"{float(m.group(1)):.1f}%"
+                except ValueError:
+                    pct = f"{m.group(1)}%"
+            else:
+                pct = "IN PROG"
+            title = "   POOL SCRUB   "
             detail = f"PROGRESS: {pct:<6}"
             return True, title[:16], detail[:16]
-        elif "scrub in progress" in res.stdout:
-            # Only report maintenance if no drives have faulted
-            if "FAULTED" not in res.stdout and "UNAVAIL" not in res.stdout:
-                m = re.search(r'([0-9\.]+)%\s*done', res.stdout)
-                if m:
-                    try:
-                        pct = f"{float(m.group(1)):.1f}%"
-                    except ValueError:
-                        pct = f"{m.group(1)}%"
-                else:
-                    pct = "IN PROG"
-                title = "   POOL SCRUB   "
-                detail = f"PROGRESS: {pct:<6}"
-                return True, title[:16], detail[:16]
-    except Exception:
-        pass
 
     return False, "", ""
 
@@ -426,40 +454,33 @@ def determine_storage_state(pool_name="storage"):
     if missing_disks:
         return STATE_ALERT, "** RAID ALERT **", f"FAIL: DISK {','.join(missing_disks)}"[:16]
 
-    # 1b. If 'rebuild' script is actively executing Steps [1/5]..[5/5], show REBUILD1 immediately
+    # 1b. If 'rebuild' script is actively executing Steps [1/5]..[5/5], pass hint_disk directly
     rebuild_flag = "/run/terastation_rebuild_in_progress"
+    hint_disk = None
     if os.path.exists(rebuild_flag):
-        flag_disk = ""
         try:
             with open(rebuild_flag, "r") as rf:
                 d_str = rf.read().strip()
                 if d_str.isdigit():
-                    flag_disk = d_str
+                    hint_disk = int(d_str)
         except Exception:
             pass
-        is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
+        is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name, hint_disk=hint_disk)
         if is_rebuilding:
-            if flag_disk and rebuild_title.strip() in ["REBUILD1: RAID", "REBUILD2: POOL"]:
-                phase = "REBUILD2" if rebuild_title.startswith("REBUILD2") else "REBUILD1"
-                rebuild_title = f"{phase}: DISK {flag_disk}"[:16]
             return STATE_REBUILDING, rebuild_title, rebuild_detail
-        t_str = f"REBUILD1: DISK {flag_disk}" if flag_disk else "REBUILD1: RAID  "
+        t_str = f"REBUILD1: DISK {hint_disk}" if hint_disk else "REBUILD1: RAID  "
         return STATE_REBUILDING, t_str[:16], "PROGRESS: 0.0%  "
 
     # 2. Check for ZFS faults when no ZFS resilver is actively running
+    zfs_stdout = _get_zpool_status(pool_name)
     zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name)
     if not zfs_ok:
-        zfs_resilvering = False
-        try:
-            zres = subprocess.run(['/sbin/zpool', 'status', pool_name], capture_output=True, text=True, timeout=5)
-            zfs_resilvering = ("resilver in progress" in zres.stdout and "(resilvering)" in zres.stdout)
-        except Exception:
-            pass
+        zfs_resilvering = ("resilver in progress" in zfs_stdout and "(resilvering)" in zfs_stdout)
         if not zfs_resilvering:
             return STATE_ALERT, "** RAID ALERT **", zfs_detail if zfs_detail else f"STATE: {zfs_status}"
 
     # 3. Check if an active rebuild or maintenance scrub is in progress
-    is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
+    is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name, zfs_stdout=zfs_stdout)
     if is_rebuilding:
         return STATE_REBUILDING, rebuild_title, rebuild_detail
 
