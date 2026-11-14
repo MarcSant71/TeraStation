@@ -197,7 +197,7 @@ fi
 AUTO_FAILED_DEV=""
 AUTO_FAILED_DISK=""
 mdstat_now=$(cat /proc/mdstat 2>/dev/null)
-zfs_now=$(zpool status "$POOL_NAME" 2>/dev/null)
+zfs_now=$(/sbin/zpool status "$POOL_NAME" 2>/dev/null)
 
 for p in "${sorted_bays[@]}"; do
     d_label="${DISK_MAP[$p]}"
@@ -208,19 +208,17 @@ for p in "${sorted_bays[@]}"; do
         d_failed=0
         if [ ! -b "${d_path}1" ] || [ ! -b "${d_path}2" ] || [ ! -b "${d_path}3" ] || [ ! -b "${d_path}4" ]; then
             d_failed=1
-        elif ! echo "$mdstat_now" | grep -q "${d_name}2"; then
+        elif ! grep -q -E "(^|[[:space:]])${d_name}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_now"; then
             d_failed=1
-        elif ! echo "$mdstat_now" | grep -q "${d_name}3"; then
+        elif ! grep -q -E "(^|[[:space:]])${d_name}3\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_now"; then
             d_failed=1
-        elif echo "$zfs_now" | grep -q "${d_name}4.*FAULTED"; then
+        elif grep -q -E "^[[:space:]]+${d_name}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)" <<< "$zfs_now"; then
             d_failed=1
-        elif echo "$zfs_now" | grep -q "${d_name}4.*DEGRADED"; then
+        elif grep -q -E "was .*/${d_name}4(/old)?([[:space:]]|$)" <<< "$zfs_now"; then
             d_failed=1
-        elif echo "$zfs_now" | grep -q "${d_name}4.*UNAVAIL"; then
+        elif grep -q -E "^[[:space:]]+${d_name}4[[:space:]]+ONLINE.*\(resilvering\)" <<< "$zfs_now"; then
             d_failed=1
-        elif echo "$zfs_now" | grep -q "was .*/${d_name}4"; then
-            d_failed=1
-        elif ! echo "$zfs_now" | grep -q "${d_name}4"; then
+        elif ! grep -q -E "^[[:space:]]+${d_name}4[[:space:]]" <<< "$zfs_now"; then
             d_failed=1
         fi
         if [ "$d_failed" -eq 1 ] && [ -z "$AUTO_FAILED_DEV" ]; then
@@ -295,12 +293,19 @@ TARGET_SIZE=$(lsblk -d -n -o SIZE "$TARGET_DEV" 2>/dev/null || echo "N/A")
 TARGET_MODEL=$(lsblk -d -n -o MODEL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 TARGET_SERIAL=$(lsblk -d -n -o SERIAL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 
-# Safeguard: refuse to wipe a disk that is already 100% healthy in all arrays
+# Safeguard: refuse to wipe a disk that is already rebuilding or 100% healthy in all arrays
 mdstat_check=$(cat /proc/mdstat 2>/dev/null || true)
 zfs_check=$(/sbin/zpool status "$POOL_NAME" 2>/dev/null || true)
-if echo "$mdstat_check" | grep -q -E "${CLEAN_DEV}2\[[0-9]+\]($| )" && \
-   echo "$mdstat_check" | grep -q -E "${CLEAN_DEV}3\[[0-9]+\]($| )" && \
-   echo "$zfs_check" | grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+ONLINE"; then
+if grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+ONLINE.*\(resilvering\)" <<< "$zfs_check"; then
+    echo -e "\n${YELLOW}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is currently REBUILDING (ZFS resilvering in progress).${NC}"
+    echo -e "Refusing to wipe an active rebuild. Run ${BOLD}status${NC} to monitor progress."
+    exit 1
+fi
+if grep -q -E "(^|[[:space:]])${CLEAN_DEV}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_check" && \
+   grep -q -E "(^|[[:space:]])${CLEAN_DEV}3\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_check" && \
+   grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+ONLINE([[:space:]]+[0-9]+){3}[[:space:]]*$" <<< "$zfs_check" && \
+   ! grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)" <<< "$zfs_check" && \
+   ! grep -q -E "was .*/${CLEAN_DEV}4(/old)?([[:space:]]|$)" <<< "$zfs_check"; then
     echo -e "\n${GREEN}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is already 100% ONLINE and synchronized in md0, md1, and ZFS.${NC}"
     echo -e "Refusing to wipe a healthy disk. Run ${BOLD}status${NC} to identify the actual failed bay."
     exit 1
@@ -319,7 +324,7 @@ SOURCE_DISK=""
 for d in sda sdb sdc sdd sde sdf sdg sdh; do
     if [ "$d" != "$CLEAN_DEV" ] && [ -b "/dev/$d" ]; then
         if [ -b "/dev/${d}1" ] && [ -b "/dev/${d}2" ] && [ -b "/dev/${d}3" ] && [ -b "/dev/${d}4" ]; then
-            if [ -z "$mdstat_check" ] || echo "$mdstat_check" | grep -q "${d}2\["; then
+            if [ -z "$mdstat_check" ] || grep -q "${d}2\[" <<< "$mdstat_check"; then
                 SOURCE_DISK="/dev/$d"
                 break
             fi
