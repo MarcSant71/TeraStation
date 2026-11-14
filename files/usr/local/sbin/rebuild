@@ -343,10 +343,29 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "yes" && "$CONFIRM" != "s" && "$CONFIRM
 fi
 
 echo ""
+step_start() {
+    local msg="$1"
+    local pad=$((69 - ${#msg}))
+    [ "$pad" -lt 3 ] && pad=3
+    local dots
+    dots=$(printf '%*s' "$pad" '' | tr ' ' '.')
+    printf "%s %s " "$msg" "$dots"
+}
+
+step_ok() {
+    echo -e "[ ${GREEN}OK${NC} ]"
+}
+
+step_fail() {
+    echo -e "[${RED}FAIL${NC}]"
+    [ -n "${1:-}" ] && echo -e "${RED}  $1${NC}"
+    exit 1
+}
+
 # ------------------------------------------------------------------------------
 # Step 1: Wipe residual metadata and clone GPT partition table
 # ------------------------------------------------------------------------------
-echo -e "${BOLD}[1/5] Wiping residual metadata and cloning partition table on $TARGET_DEV...${NC}"
+step_start "[1/5] Partition table (${TARGET_DEV} from ${SOURCE_DISK})"
 for part in "${TARGET_DEV}"[0-9]*; do
     if [ -b "$part" ]; then
         mdadm --manage /dev/md0 --fail "$part" >/dev/null 2>&1 || true
@@ -363,7 +382,6 @@ mdadm --zero-superblock "$TARGET_DEV" >/dev/null 2>&1 || true
 wipefs -a "$TARGET_DEV" >/dev/null 2>&1 || true
 sgdisk --zap-all "$TARGET_DEV" >/dev/null 2>&1 || true
 
-echo -e "  Cloning partition table from $SOURCE_DISK..."
 sfdisk -d "$SOURCE_DISK" | sfdisk --force "$TARGET_DEV" >/dev/null 2>&1
 sgdisk -G "$TARGET_DEV" >/dev/null 2>&1
 blockdev --rereadpt "$TARGET_DEV" 2>/dev/null || true
@@ -371,8 +389,7 @@ udevadm settle
 sleep 2
 
 if [ ! -b "${TARGET_DEV}2" ] || [ ! -b "${TARGET_DEV}4" ]; then
-    echo -e "${RED}[ERROR] Failed to verify partitions on $TARGET_DEV!${NC}"
-    exit 1
+    step_fail "Failed to verify partitions on $TARGET_DEV!"
 fi
 
 # Clear any stale RAID/ZFS superblocks aligned with the newly created partitions
@@ -381,36 +398,34 @@ for pnum in 2 3 4; do
     mdadm --zero-superblock "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
     wipefs -a "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
 done
-echo -e "${GREEN}  -> [OK] GPT partition table verified successfully.${NC}"
+step_ok
 
 # ------------------------------------------------------------------------------
 # Step 2: Re-add Root partition (Debian OS /) to RAID-1 md0
 # ------------------------------------------------------------------------------
-echo -e "${BOLD}[2/5] Re-adding system partition (${TARGET_DEV}2) to RAID md0...${NC}"
+step_start "[2/5] System RAID-1 mirror (md0 <- ${TARGET_DEV}2)"
 mdadm --manage /dev/md0 --add "${TARGET_DEV}2" >/dev/null 2>&1 || true
-echo -e "${GREEN}  -> [OK] Operating system partition added to RAID md0.${NC}"
+step_ok
 
 # ------------------------------------------------------------------------------
 # Step 3: Re-add Swap partition to RAID-1 md1
 # ------------------------------------------------------------------------------
-echo -e "${BOLD}[3/5] Re-adding swap partition (${TARGET_DEV}3) to RAID md1...${NC}"
+step_start "[3/5] Swap RAID-1 mirror (md1 <- ${TARGET_DEV}3)"
 mdadm --manage /dev/md1 --add "${TARGET_DEV}3" >/dev/null 2>&1 || true
 mdadm --readwrite /dev/md0 >/dev/null 2>&1 || true
 mdadm --readwrite /dev/md1 >/dev/null 2>&1 || true
-echo -e "${GREEN}  -> [OK] Swap partition added to RAID md1.${NC}"
+step_ok
 
 # ------------------------------------------------------------------------------
 # Step 4: Install bootloader (GRUB) on new disk
 # ------------------------------------------------------------------------------
-echo -e "${BOLD}[4/5] Installing bootloader (GRUB) on $TARGET_DEV...${NC}"
-grub-install "$TARGET_DEV" >/dev/null 2>&1
-echo -e "${GREEN}  -> [OK] GRUB bootloader installed successfully.${NC}"
+step_start "[4/5] Bootloader GRUB (${TARGET_DEV})"
+grub-install "$TARGET_DEV" >/dev/null 2>&1 || step_fail "grub-install failed on $TARGET_DEV!"
+step_ok
 
 # ------------------------------------------------------------------------------
 # Step 5: Replace partition in ZFS pool and trigger Resilver
 # ------------------------------------------------------------------------------
-echo -e "${BOLD}[5/5] Integrating ${TARGET_DEV}4 into ZFS pool '$POOL_NAME'...${NC}"
-
 OLD_TARGET=$(python3 - << EOF
 import os, subprocess, sys
 
@@ -462,25 +477,21 @@ print(target_part)
 EOF
 )
 
-echo -e "  Replacing vdev '$OLD_TARGET' with '${TARGET_DEV}4'..."
+step_start "[5/5] ZFS pool '${POOL_NAME}' (${OLD_TARGET} -> ${TARGET_DEV}4)"
 ZFS_ERR=""
 if ! ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>&1); then
     if [ "$OLD_TARGET" != "${CLEAN_DEV}4" ]; then
         zpool offline "$POOL_NAME" "$OLD_TARGET" >/dev/null 2>&1 || true
-        ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>&1) || {
-            echo -e "${RED}[ERROR] ZFS replace failed: $ZFS_ERR${NC}"
-            exit 1
-        }
+        ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>&1) || step_fail "ZFS replace failed: $ZFS_ERR"
     else
-        echo -e "${RED}[ERROR] ZFS replace failed: $ZFS_ERR${NC}"
-        exit 1
+        step_fail "ZFS replace failed: $ZFS_ERR"
     fi
 fi
 
 zpool clear "$POOL_NAME" >/dev/null 2>&1 || true
-echo -e "${GREEN}  -> [OK] ZFS pool resilver triggered successfully!${NC}"
+step_ok
 
-echo -e "\n${CYAN}================================================================================${NC}"
+echo -e "\n${CYAN}==============================================================================${NC}"
 echo -e "${GREEN}${BOLD}       PROCESS COMPLETED! DISK RE-INTEGRATED SUCCESSFULLY                       ${NC}"
 echo -e "${CYAN}==============================================================================${NC}"
 echo -e "Checking updated system status...\n"
