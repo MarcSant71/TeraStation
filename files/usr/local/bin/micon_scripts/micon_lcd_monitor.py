@@ -121,15 +121,25 @@ def get_ip_address():
 
 
 def _get_zpool_status(pool_name="storage"):
-    """Runs zpool status once and returns stdout, or empty string on error."""
+    """
+    Runs zpool status with a hard non-blocking deadline so D-state ZFS locks
+    during `zpool replace` cannot freeze the LCD polling loop.
+    """
     try:
-        res = subprocess.run(
+        proc = subprocess.Popen(
             ['/sbin/zpool', 'status', pool_name],
-            capture_output=True,
-            text=True,
-            timeout=5
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
-        return res.stdout if res.returncode == 0 else ""
+        deadline = time.time() + 3.0
+        while proc.poll() is None:
+            if time.time() >= deadline:
+                proc.kill()
+                return ""
+            time.sleep(0.05)
+        out, _ = proc.communicate(timeout=0.5)
+        return out if proc.returncode == 0 else ""
     except Exception:
         return ""
 
@@ -230,15 +240,19 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None, zfs_stdout=None)
     Checks if MDADM or ZFS is actively rebuilding/resyncing.
     Returns (is_rebuilding, title_line, detail_line)
     """
-    if zfs_stdout is None:
-        zfs_stdout = _get_zpool_status(pool_name)
-
     act0, pct0, deg0 = _read_md_sync("md0")
     act1, pct1, deg1 = _read_md_sync("md1")
-    target_disk = _find_target_disk(zfs_stdout=zfs_stdout, hint_disk=hint_disk)
+    md_active = (pct0 is not None or pct1 is not None or act0 in ("recover", "resync") or act1 in ("recover", "resync"))
+
+    # Resolve target disk from fast sysfs/hint_disk first; only query ZFS when needed
+    target_disk = _find_target_disk(zfs_stdout=(zfs_stdout or ""), hint_disk=hint_disk)
+    if not md_active or target_disk is None:
+        if zfs_stdout is None:
+            zfs_stdout = _get_zpool_status(pool_name)
+        if target_disk is None and zfs_stdout:
+            target_disk = _find_target_disk(zfs_stdout=zfs_stdout, hint_disk=hint_disk)
 
     # 1. Check MDADM resync / recovery via native sysfs counters
-    md_active = (pct0 is not None or pct1 is not None or act0 in ("recover", "resync") or act1 in ("recover", "resync"))
     if md_active:
         # When a spare disk is queued waiting for a parity resync, report 0.0% for that array until recover begins
         p0 = pct0 if (pct0 is not None and not (act0 == "resync" and target_disk)) else (0.0 if deg0 else 100.0)
@@ -382,12 +396,16 @@ def compute_sata_led_masks(pool_name="storage"):
     red_blink = 0
     green_blink = 0
 
-    zfs_raw = ""
+    rebuild_flag_disk = None
     try:
-        res = subprocess.run(['/sbin/zpool', 'status', pool_name], capture_output=True, text=True, timeout=5)
-        zfs_raw = res.stdout
+        with open("/run/terastation_rebuild_in_progress", "r") as rf:
+            val = rf.read().strip()
+            if val.isdigit():
+                rebuild_flag_disk = int(val)
     except Exception:
         pass
+
+    zfs_raw = "" if rebuild_flag_disk is not None else _get_zpool_status(pool_name)
 
     md_raw = ""
     try:
@@ -409,7 +427,9 @@ def compute_sata_led_masks(pool_name="storage"):
         is_failed = False
         is_rebuilding = False
 
-        # 1. MDADM sysfs rebuild check
+        # 1. MDADM sysfs rebuild check (or active rebuild flag)
+        if rebuild_flag_disk is not None and disk_num == rebuild_flag_disk:
+            is_rebuilding = True
         for md in ["md0", "md1"]:
             for part in [f"{dev_name}2", f"{dev_name}3"]:
                 st_file = f"/sys/block/{md}/md/dev-{part}/state"
