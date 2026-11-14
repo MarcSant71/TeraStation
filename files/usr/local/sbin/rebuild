@@ -73,6 +73,46 @@ get_disk_for_dev() {
     echo "Unknown"
 }
 
+wipe_and_clone_gpt() {
+    local target_dev="$1"
+    local source_dev="$2"
+    local part pnum
+
+    for part in "${target_dev}"[0-9]*; do
+        if [ -b "$part" ]; then
+            mdadm --manage /dev/md0 --fail "$part" >/dev/null 2>&1 || true
+            mdadm --manage /dev/md0 --remove "$part" >/dev/null 2>&1 || true
+            mdadm --manage /dev/md1 --fail "$part" >/dev/null 2>&1 || true
+            mdadm --manage /dev/md1 --remove "$part" >/dev/null 2>&1 || true
+            zpool labelclear -f "$part" >/dev/null 2>&1 || true
+            mdadm --zero-superblock "$part" >/dev/null 2>&1 || true
+            wipefs -a "$part" >/dev/null 2>&1 || true
+        fi
+    done
+    zpool labelclear -f "$target_dev" >/dev/null 2>&1 || true
+    mdadm --zero-superblock "$target_dev" >/dev/null 2>&1 || true
+    wipefs -a "$target_dev" >/dev/null 2>&1 || true
+    sgdisk --zap-all "$target_dev" >/dev/null 2>&1 || true
+
+    sfdisk -d "$source_dev" | sfdisk --force "$target_dev" >/dev/null 2>&1
+    sgdisk -G "$target_dev" >/dev/null 2>&1
+    blockdev --rereadpt "$target_dev" 2>/dev/null || true
+    udevadm settle
+    sleep 2
+
+    if [ ! -b "${target_dev}2" ] || [ ! -b "${target_dev}4" ]; then
+        return 1
+    fi
+
+    # Clear any stale RAID/ZFS superblocks aligned with the newly created partitions
+    for pnum in 2 3 4; do
+        zpool labelclear -f "${target_dev}${pnum}" >/dev/null 2>&1 || true
+        mdadm --zero-superblock "${target_dev}${pnum}" >/dev/null 2>&1 || true
+        wipefs -a "${target_dev}${pnum}" >/dev/null 2>&1 || true
+    done
+    return 0
+}
+
 init_storage() {
     echo -e "${RED}================================================================================${NC}"
     echo -e "${BOLD}       WARNING: COMPLETE ZFS POOL & iSCSI VOLUME (18 TB) INITIALIZATION         ${NC}"
@@ -103,6 +143,8 @@ init_storage() {
     local zfs_vdevs=()
     local missing_disks=()
     local donor_disk=""
+    local mdstat_init
+    mdstat_init=$(cat /proc/mdstat 2>/dev/null || true)
 
     for p in "${sorted_bays[@]}"; do
         local disk_label="${DISK_MAP[$p]}"
@@ -114,7 +156,9 @@ init_storage() {
             dev_name=$(basename "$(readlink -f "$link_path")")
             zfs_vdevs+=("${dev_name}4")
             if [ -z "$donor_disk" ] && [ -b "/dev/${dev_name}1" ] && [ -b "/dev/${dev_name}2" ] && [ -b "/dev/${dev_name}3" ] && [ -b "/dev/${dev_name}4" ]; then
-                donor_disk="/dev/$dev_name"
+                if [ -z "$mdstat_init" ] || grep -q -E "(^|[[:space:]])${dev_name}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_init"; then
+                    donor_disk="/dev/$dev_name"
+                fi
             fi
         fi
     done
@@ -137,39 +181,66 @@ init_storage() {
         dev_name=$(basename "$(readlink -f "/dev/disk/by-path/$p")")
         local dev_path="/dev/$dev_name"
 
-        if [ ! -b "${dev_path}1" ] || [ ! -b "${dev_path}2" ] || [ ! -b "${dev_path}3" ] || [ ! -b "${dev_path}4" ]; then
+        if [ ! -b "${dev_path}1" ] || [ ! -b "${dev_path}2" ] || [ ! -b "${dev_path}3" ] || [ ! -b "${dev_path}4" ] || \
+           ! grep -q -E "(^|[[:space:]])${dev_name}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_init" || \
+           ! grep -q -E "(^|[[:space:]])${dev_name}3\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_init"; then
             echo -e "  Cloning partition table to $dev_path (template: $donor_disk)..."
-            sfdisk -d "$donor_disk" | sfdisk --force "$dev_path" >/dev/null 2>&1
-            sgdisk -G "$dev_path" >/dev/null 2>&1
-            blockdev --rereadpt "$dev_path" 2>/dev/null || true
-            udevadm settle
-            sleep 1
+            if ! wipe_and_clone_gpt "$dev_path" "$donor_disk"; then
+                echo -e "${RED}[CRITICAL ERROR] Failed to clone partitions to $dev_path!${NC}"
+                exit 1
+            fi
         fi
 
-        if ! grep -q "${dev_name}2" /proc/mdstat; then
+        if ! grep -q -E "(^|[[:space:]])${dev_name}2\[[0-9]+\]([[:space:]]|$)" /proc/mdstat; then
             mdadm --manage /dev/md0 --add "${dev_path}2" >/dev/null 2>&1 || true
         fi
-        if ! grep -q "${dev_name}3" /proc/mdstat; then
+        if ! grep -q -E "(^|[[:space:]])${dev_name}3\[[0-9]+\]([[:space:]]|$)" /proc/mdstat; then
             mdadm --manage /dev/md1 --add "${dev_path}3" >/dev/null 2>&1 || true
         fi
         grub-install "$dev_path" >/dev/null 2>&1 || true
     done
+    mdadm --readwrite /dev/md0 >/dev/null 2>&1 || true
+    mdadm --readwrite /dev/md1 >/dev/null 2>&1 || true
+    if [ "$(cat /sys/block/md0/md/sync_action 2>/dev/null)" == "resync" ]; then
+        echo idle > /sys/block/md0/md/sync_action 2>/dev/null || true
+    fi
+    if [ "$(cat /sys/block/md1/md/sync_action 2>/dev/null)" == "resync" ]; then
+        echo idle > /sys/block/md1/md/sync_action 2>/dev/null || true
+    fi
     echo -e "${GREEN}  -> [OK] Debian Operating System mirror and GRUB bootloader verified on all disks.${NC}"
 
     echo -e "\n${CYAN}[3/5] Recreating ZFS pool '$POOL_NAME' in RAID-Z1...${NC}"
     systemctl stop rtslib-fb-targetctl 2>/dev/null || true
     zpool destroy -f "$POOL_NAME" 2>/dev/null || true
-    zpool create -f -o ashift=12 "$POOL_NAME" raidz1 "${zfs_vdevs[@]}"
+    local vdev
+    for vdev in "${zfs_vdevs[@]}"; do
+        zpool labelclear -f "/dev/$vdev" >/dev/null 2>&1 || true
+        wipefs -a "/dev/$vdev" >/dev/null 2>&1 || true
+    done
+    if ! zpool create -f -o ashift=12 "$POOL_NAME" raidz1 "${zfs_vdevs[@]}"; then
+        echo -e "${RED}[CRITICAL ERROR] Failed to create ZFS pool '$POOL_NAME'!${NC}"
+        exit 1
+    fi
     echo -e "${GREEN}  -> [OK] ZFS pool '$POOL_NAME' recreated successfully.${NC}"
 
     echo -e "\n${CYAN}[4/5] Creating 18 TB iSCSI volume (64K, sync=disabled)...${NC}"
-    zfs create -V 18T -b 64K -o sync=disabled -o compression=off "$POOL_NAME/lun0"
+    if ! zfs create -V 18T -b 64K -o sync=disabled -o compression=off "$POOL_NAME/lun0"; then
+        echo -e "${RED}[CRITICAL ERROR] Failed to create ZFS volume '$POOL_NAME/lun0'!${NC}"
+        exit 1
+    fi
     udevadm settle
     sleep 2
+    if [ ! -b "/dev/zvol/$POOL_NAME/lun0" ]; then
+        echo -e "${RED}[CRITICAL ERROR] Volume block device /dev/zvol/$POOL_NAME/lun0 did not appear!${NC}"
+        exit 1
+    fi
     echo -e "${GREEN}  -> [OK] Volume '$POOL_NAME/lun0' created successfully.${NC}"
 
     echo -e "\n${CYAN}[5/5] Reactivating iSCSI storage target service (LIO)...${NC}"
-    systemctl restart rtslib-fb-targetctl
+    if ! systemctl restart rtslib-fb-targetctl; then
+        echo -e "${RED}[CRITICAL ERROR] Failed to restart rtslib-fb-targetctl!${NC}"
+        exit 1
+    fi
     echo -e "${GREEN}  -> [OK] iSCSI target online and pointing to the new volume.${NC}"
 
     echo -e "\n${CYAN}================================================================================${NC}"
@@ -419,38 +490,7 @@ step_fail() {
 # Step 1: Wipe residual metadata and clone GPT partition table
 # ------------------------------------------------------------------------------
 step_start "[1/5] Partition table (${TARGET_DEV} from ${SOURCE_DISK})"
-for part in "${TARGET_DEV}"[0-9]*; do
-    if [ -b "$part" ]; then
-        mdadm --manage /dev/md0 --fail "$part" >/dev/null 2>&1 || true
-        mdadm --manage /dev/md0 --remove "$part" >/dev/null 2>&1 || true
-        mdadm --manage /dev/md1 --fail "$part" >/dev/null 2>&1 || true
-        mdadm --manage /dev/md1 --remove "$part" >/dev/null 2>&1 || true
-        zpool labelclear -f "$part" >/dev/null 2>&1 || true
-        mdadm --zero-superblock "$part" >/dev/null 2>&1 || true
-        wipefs -a "$part" >/dev/null 2>&1 || true
-    fi
-done
-zpool labelclear -f "$TARGET_DEV" >/dev/null 2>&1 || true
-mdadm --zero-superblock "$TARGET_DEV" >/dev/null 2>&1 || true
-wipefs -a "$TARGET_DEV" >/dev/null 2>&1 || true
-sgdisk --zap-all "$TARGET_DEV" >/dev/null 2>&1 || true
-
-sfdisk -d "$SOURCE_DISK" | sfdisk --force "$TARGET_DEV" >/dev/null 2>&1
-sgdisk -G "$TARGET_DEV" >/dev/null 2>&1
-blockdev --rereadpt "$TARGET_DEV" 2>/dev/null || true
-udevadm settle
-sleep 2
-
-if [ ! -b "${TARGET_DEV}2" ] || [ ! -b "${TARGET_DEV}4" ]; then
-    step_fail "Failed to verify partitions on $TARGET_DEV!"
-fi
-
-# Clear any stale RAID/ZFS superblocks aligned with the newly created partitions
-for pnum in 2 3 4; do
-    zpool labelclear -f "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
-    mdadm --zero-superblock "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
-    wipefs -a "${TARGET_DEV}${pnum}" >/dev/null 2>&1 || true
-done
+wipe_and_clone_gpt "$TARGET_DEV" "$SOURCE_DISK" || step_fail "Failed to verify partitions on $TARGET_DEV!"
 step_ok
 
 # ------------------------------------------------------------------------------
