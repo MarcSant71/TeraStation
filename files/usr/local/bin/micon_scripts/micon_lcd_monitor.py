@@ -25,7 +25,7 @@ Emulates authentic Buffalo TeraStation firmware front panel behavior:
    - Disk faulted, missing, unallocated, or degraded (when NO rebuild is active).
    - Backlight: Solid ORANGE (for clear readability).
    - Front LEDs: ERROR=BLINK, INFO=OFF.
-   - Drive Tray LEDs: Failed or empty bay lights up RED (Green OFF); healthy bays remain Green Solid.
+   - Drive Tray LEDs: Failed or empty bay blinks RED (Green OFF); healthy bays remain Green Solid.
    - Screen: LOCKED on alert message ("** RAID ALERT **" / "FAIL: DISK X").
      * Pressing DISPLAY shows IP/Clock.
      * Automatically returns to Alert screen after 15s timeout.
@@ -410,7 +410,7 @@ def compute_sata_led_masks(pool_name="storage"):
     Evaluates individual bay health for drive tray LEDs:
     - Normal/Healthy: Green Solid, Red OFF, Blink OFF.
     - Rebuilding/Resyncing: Green Blinking (via hardware register 0x59).
-    - Failed / Unseated / Degraded: Red Solid (via hardware register 0x58), Green OFF.
+    - Failed / Unseated / Degraded: Red Blinking (via registers 0x58 + 0x59), Green OFF.
     Returns (onoff_bytes, blink_bytes)
     """
     red_on = 0
@@ -439,10 +439,11 @@ def compute_sata_led_masks(pool_name="storage"):
     for disk_num, p_id, bit in BAYS:
         link_path = f"/dev/disk/by-path/{p_id}"
         if not os.path.islink(link_path):
-            # Physical bay is empty: only turn on RED LED if an active array is degraded
+            # Physical bay is empty: only blink RED LED if an active array is degraded
             is_degraded = ("[_" in md_raw) or any(x in zfs_raw for x in ["FAULTED", "DEGRADED", "UNAVAIL", "OFFLINE", "REMOVED"])
             if is_degraded:
                 red_on |= (1 << bit)
+                red_blink |= (1 << bit)
             continue
 
         dev_name = os.path.basename(os.path.realpath(link_path))
@@ -481,6 +482,7 @@ def compute_sata_led_masks(pool_name="storage"):
             green_blink |= (1 << bit)
         elif is_failed:
             red_on |= (1 << bit)
+            red_blink |= (1 << bit)
         else:
             green_on |= (1 << bit)
 
