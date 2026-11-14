@@ -122,8 +122,8 @@ Below are the ASCII representations of the front LCD display screens managed by 
 4. Monotonic Disk Rebuild & Pool Scrub - Backlight: SOLID AMBER (0x03) + CHIME
 ================================================================================
 +----------------+     +----------------+
-|  REBUILD: DISK3|     |   POOL SCRUB   |  (Continuous real-time progress;
-| PROGRESS: 47.8%| <-> | PROGRESS: 49.4%|   Emits chime on start and completion;
+|REBUILD1: DISK 3|     |   POOL SCRUB   |  (REBUILD1=OS md0/md1, REBUILD2=ZFS;
+|PROGRESS: 47.8% | <-> |PROGRESS: 49.4% |   Emits chime on start and completion;
 +----------------+     +----------------+   Amber Info LED ON, Error LED OFF)
 
 ================================================================================
