@@ -166,17 +166,30 @@ def check_rebuild_progress(pool_name="storage"):
         b1 = re.search(r"^md1\s*:.*?(?=\n\s*\n|\Z)", md_text, re.MULTILINE | re.DOTALL)
         m0 = re.search(r"(recovery|resync)\s*=\s*([0-9\.]+)%", b0.group(0)) if b0 else None
         m1 = re.search(r"(recovery|resync)\s*=\s*([0-9\.]+)%", b1.group(0)) if b1 else None
+        if m0 or m1:
+            if not target_disk:
+                try:
+                    zres = subprocess.run(['/sbin/zpool', 'status', pool_name], capture_output=True, text=True, timeout=5)
+                    for zline in zres.stdout.splitlines():
+                        if "(resilvering)" in zline:
+                            zparts = zline.strip().split()
+                            if zparts and zparts[0].startswith("sd"):
+                                target_disk = get_disk_number(zparts[0])
+                                if target_disk:
+                                    break
+                except Exception:
+                    pass
         if m0:
             pct0 = float(m0.group(2))
             overall_pct = pct0 * 0.862
-            title = f"REBUILD1: DISK {target_disk}" if target_disk else "  REBUILDING 1  "
+            title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
             val = f"{overall_pct:.1f}%"
             detail = f"PROGRESS: {val:<6}"
             return True, title[:16], detail[:16]
         elif m1:
             pct1 = float(m1.group(2))
             overall_pct = 86.2 + (pct1 * 0.138)
-            title = f"REBUILD1: DISK {target_disk}" if target_disk else "  REBUILDING 1  "
+            title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
             val = f"{overall_pct:.1f}%"
             detail = f"PROGRESS: {val:<6}"
             return True, title[:16], detail[:16]
@@ -209,7 +222,7 @@ def check_rebuild_progress(pool_name="storage"):
                                 break
             m = re.search(r'([0-9\.]+)%\s*done', res.stdout)
             pct = f"{float(m.group(1)):.1f}%" if m else "IN PROG"
-            title = f"REBUILD2: DISK {zfs_disk}" if zfs_disk else "  REBUILDING 2  "
+            title = f"REBUILD2: DISK {zfs_disk}" if zfs_disk else "REBUILD2: POOL  "
             detail = f"PROGRESS: {pct:<6}"
             return True, title[:16], detail[:16]
         elif "scrub in progress" in res.stdout:
