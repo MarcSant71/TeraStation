@@ -162,8 +162,10 @@ def check_rebuild_progress(pool_name="storage"):
         with open("/proc/mdstat", "r") as f:
             md_text = f.read()
 
-        m0 = re.search(r"md0\s*:[\s\S]*?(recovery|resync)\s*=\s*([0-9\.]+)%", md_text)
-        m1 = re.search(r"md1\s*:[\s\S]*?(recovery|resync)\s*=\s*([0-9\.]+)%", md_text)
+        b0 = re.search(r"^md0\s*:.*?(?=\n\s*\n|\Z)", md_text, re.MULTILINE | re.DOTALL)
+        b1 = re.search(r"^md1\s*:.*?(?=\n\s*\n|\Z)", md_text, re.MULTILINE | re.DOTALL)
+        m0 = re.search(r"(recovery|resync)\s*=\s*([0-9\.]+)%", b0.group(0)) if b0 else None
+        m1 = re.search(r"(recovery|resync)\s*=\s*([0-9\.]+)%", b1.group(0)) if b1 else None
         if m0:
             pct0 = float(m0.group(2))
             overall_pct = pct0 * 0.862
