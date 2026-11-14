@@ -113,6 +113,37 @@ wipe_and_clone_gpt() {
     return 0
 }
 
+resolve_zfs_part_dev() {
+    local disk_dev="$1"
+    local part_dev="${disk_dev}4"
+    local part_real
+    part_real=$(readlink -f "$part_dev" 2>/dev/null || true)
+
+    if [ -n "$part_real" ]; then
+        local id_link
+        # Prefer stable ATA/SCSI hardware symlinks over volatile /dev/sdX4 names (skip wwn- aliases)
+        for id_link in /dev/disk/by-id/*-part4; do
+            [ -L "$id_link" ] || continue
+            case "$(basename "$id_link")" in
+                wwn-*) continue ;;
+            esac
+            if [ "$(readlink -f "$id_link" 2>/dev/null)" = "$part_real" ]; then
+                echo "$id_link"
+                return 0
+            fi
+        done
+        for id_link in /dev/disk/by-id/*-part4; do
+            [ -L "$id_link" ] || continue
+            if [ "$(readlink -f "$id_link" 2>/dev/null)" = "$part_real" ]; then
+                echo "$id_link"
+                return 0
+            fi
+        done
+    fi
+
+    echo "$part_dev"
+}
+
 init_storage() {
     echo -e "${RED}================================================================================${NC}"
     echo -e "${BOLD}       WARNING: COMPLETE ZFS POOL & iSCSI VOLUME (18 TB) INITIALIZATION         ${NC}"
@@ -140,6 +171,7 @@ init_storage() {
 
     echo ""
     echo -e "${CYAN}[1/5] Verifying physical presence of all 8 disks...${NC}"
+    local zfs_devs_raw=()
     local zfs_vdevs=()
     local missing_disks=()
     local donor_disk=""
@@ -154,7 +186,7 @@ init_storage() {
         else
             local dev_name
             dev_name=$(basename "$(readlink -f "$link_path")")
-            zfs_vdevs+=("${dev_name}4")
+            zfs_devs_raw+=("/dev/$dev_name")
             if [ -z "$donor_disk" ] && [ -b "/dev/${dev_name}1" ] && [ -b "/dev/${dev_name}2" ] && [ -b "/dev/${dev_name}3" ] && [ -b "/dev/${dev_name}4" ]; then
                 if [ -z "$mdstat_init" ] || grep -q -E "(^|[[:space:]])${dev_name}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_init"; then
                     donor_disk="/dev/$dev_name"
@@ -212,19 +244,29 @@ init_storage() {
     echo -e "\n${CYAN}[3/5] Recreating ZFS pool '$POOL_NAME' in RAID-Z1...${NC}"
     systemctl stop rtslib-fb-targetctl 2>/dev/null || true
     zpool destroy -f "$POOL_NAME" 2>/dev/null || true
-    local vdev
-    for vdev in "${zfs_vdevs[@]}"; do
-        zpool labelclear -f "/dev/$vdev" >/dev/null 2>&1 || true
-        wipefs -a "/dev/$vdev" >/dev/null 2>&1 || true
+    udevadm settle
+    local raw_dev vdev vdev_path
+    for raw_dev in "${zfs_devs_raw[@]}"; do
+        vdev=$(resolve_zfs_part_dev "$raw_dev")
+        [[ "$vdev" == /dev/* ]] && vdev_path="$vdev" || vdev_path="/dev/$vdev"
+        zpool labelclear -f "$vdev_path" >/dev/null 2>&1 || true
+        wipefs -a "$vdev_path" >/dev/null 2>&1 || true
+        zfs_vdevs+=("$vdev")
     done
-    if ! zpool create -f -o ashift=12 "$POOL_NAME" raidz1 "${zfs_vdevs[@]}"; then
+    if ! zpool create -f -o ashift=12 -O compression=lz4 -O atime=off -O xattr=sa "$POOL_NAME" raidz1 "${zfs_vdevs[@]}"; then
         echo -e "${RED}[CRITICAL ERROR] Failed to create ZFS pool '$POOL_NAME'!${NC}"
         exit 1
     fi
     echo -e "${GREEN}  -> [OK] ZFS pool '$POOL_NAME' recreated successfully.${NC}"
 
-    echo -e "\n${CYAN}[4/5] Creating 18 TB iSCSI volume (64K, sync=disabled)...${NC}"
-    if ! zfs create -V 18T -b 64K -o sync=disabled -o compression=off "$POOL_NAME/lun0"; then
+    local avail_bytes vol_size="18T"
+    avail_bytes=$(zfs get -Hp -o value available "$POOL_NAME" 2>/dev/null || true)
+    if [[ "$avail_bytes" =~ ^[0-9]+$ ]] && [ "$avail_bytes" -gt 0 ]; then
+        vol_size=$(python3 -c 'import sys; b=int(sys.argv[1]); print(f"{max(1, round(b / (1024**4)))}T")' "$avail_bytes")
+    fi
+
+    echo -e "\n${CYAN}[4/5] Creating ${vol_size} iSCSI volume (64K, sync=disabled)...${NC}"
+    if ! zfs create -s -V "$vol_size" -b 64K -o sync=disabled -o compression=lz4 "$POOL_NAME/lun0"; then
         echo -e "${RED}[CRITICAL ERROR] Failed to create ZFS volume '$POOL_NAME/lun0'!${NC}"
         exit 1
     fi
@@ -268,7 +310,7 @@ fi
 AUTO_FAILED_DEV=""
 AUTO_FAILED_DISK=""
 mdstat_now=$(cat /proc/mdstat 2>/dev/null)
-zfs_now=$(/sbin/zpool status "$POOL_NAME" 2>/dev/null)
+zfs_now=$(/sbin/zpool status -L "$POOL_NAME" 2>/dev/null)
 
 for p in "${sorted_bays[@]}"; do
     d_label="${DISK_MAP[$p]}"
@@ -367,7 +409,7 @@ TARGET_SERIAL=$(lsblk -d -n -o SERIAL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 
 # Safeguard: refuse to wipe a disk that is already rebuilding or 100% healthy in all arrays
 mdstat_check=$(cat /proc/mdstat 2>/dev/null || true)
-zfs_check=$(/sbin/zpool status "$POOL_NAME" 2>/dev/null || true)
+zfs_check=$(/sbin/zpool status -L "$POOL_NAME" 2>/dev/null || true)
 if grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+ONLINE.*\(resilvering\)" <<< "$zfs_check"; then
     echo -e "\n${YELLOW}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is currently REBUILDING (ZFS resilvering in progress).${NC}"
     echo -e "Refusing to wipe an active rebuild. Run ${BOLD}status${NC} to monitor progress."
@@ -548,20 +590,30 @@ for p in bay_paths:
         if dev != clean_dev:
             other_bay_parts.add(f"{dev}4")
 
-res = subprocess.run(['/sbin/zpool', 'status', pool_name], capture_output=True, text=True)
+res = subprocess.run(['/sbin/zpool', 'status', '-L', pool_name], capture_output=True, text=True)
 lines = res.stdout.splitlines()
 
-# 1. Search for 'was /dev/target_part' or 'was target_part'
-for line in lines:
-    if f'was /dev/{target_part}' in line or f'was {target_part}' in line:
-        print(line.strip().split()[0])
-        sys.exit(0)
+# Collect optional by-id aliases for clean_dev partition 4 (if pool was imported by-id)
+id_aliases = {f'/dev/{target_part}', target_part}
+by_id_dir = '/dev/disk/by-id'
+if os.path.isdir(by_id_dir):
+    for name in os.listdir(by_id_dir):
+        if name.endswith('-part4') and os.path.basename(os.path.realpath(os.path.join(by_id_dir, name))) == target_part:
+            id_aliases.add(name)
+            id_aliases.add(os.path.join(by_id_dir, name))
 
-# 2. Search for any vdev (GUID or sdX4) that is UNAVAIL/FAULTED/OFFLINE/REMOVED
+# 1. Search for 'was /dev/target_part' or 'was <by-id>'
+for line in lines:
+    for alias in id_aliases:
+        if f'was {alias}' in line:
+            print(line.strip().split()[0])
+            sys.exit(0)
+
+# 2. Search for any vdev (GUID, sdX4, or by-id name) that is UNAVAIL/FAULTED/OFFLINE/REMOVED
 for line in lines:
     parts = line.strip().split()
     if len(parts) >= 2 and parts[1] in ['UNAVAIL', 'FAULTED', 'OFFLINE', 'REMOVED']:
-        if parts[0].isdigit() or parts[0].startswith('sd'):
+        if parts[0].isdigit() or parts[0].startswith(('sd', 'ata-', 'wwn-', 'scsi-')):
             print(parts[0])
             sys.exit(0)
 
@@ -577,12 +629,13 @@ print(target_part)
 EOF
 )
 
-step_start "[5/5] ZFS pool '${POOL_NAME}' (${OLD_TARGET} -> ${TARGET_DEV}4)"
+NEW_ZFS_VDEV=$(resolve_zfs_part_dev "$TARGET_DEV")
+step_start "[5/5] ZFS pool '${POOL_NAME}' (${OLD_TARGET} -> ${NEW_ZFS_VDEV})"
 ZFS_ERR=""
-if ! ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>&1); then
+if ! ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "$NEW_ZFS_VDEV" 2>&1); then
     if [ "$OLD_TARGET" != "${CLEAN_DEV}4" ]; then
         zpool offline "$POOL_NAME" "$OLD_TARGET" >/dev/null 2>&1 || true
-        ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>&1) || step_fail "ZFS replace failed: $ZFS_ERR"
+        ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "$NEW_ZFS_VDEV" 2>&1) || step_fail "ZFS replace failed: $ZFS_ERR"
     else
         step_fail "ZFS replace failed: $ZFS_ERR"
     fi

@@ -58,7 +58,7 @@ echo -e "${CYAN}================================================================
 printf "%-7s %-10s %-6s %-20s %-16s %s\n" "BAY" "DISK" "SIZE" "MODEL" "SERIAL" "STATUS"
 echo -e "------------------------------------------------------------------------------"
 
-zfs_status_raw=$(/sbin/zpool status "$POOL_NAME" 2>/dev/null || true)
+zfs_status_raw=$(/sbin/zpool status -L "$POOL_NAME" 2>/dev/null || true)
 mdstat_raw=$(cat /proc/mdstat 2>/dev/null || true)
 
 REBUILD_CANDIDATE_DEV=""
@@ -92,7 +92,7 @@ elif m1:
     print(f"{86.2 + (pct1 * 0.138):.1f}%")
 else:
     try:
-        res = subprocess.run(['/sbin/zpool', 'status', 'storage'], capture_output=True, text=True)
+        res = subprocess.run(['/sbin/zpool', 'status', '-L', 'storage'], capture_output=True, text=True)
         if "resilver in progress" in res.stdout:
             mz = re.search(r'([0-9\.]+)%\s*done', res.stdout)
             if mz:

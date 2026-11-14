@@ -142,7 +142,7 @@ def _get_zpool_status(pool_name="storage"):
     """
     try:
         proc = subprocess.Popen(
-            ['/sbin/zpool', 'status', pool_name],
+            ['/sbin/zpool', 'status', '-L', pool_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
