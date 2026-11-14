@@ -347,6 +347,9 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "yes" && "$CONFIRM" != "s" && "$CONFIRM
     exit 0
 fi
 
+REBUILD_FLAG="/run/terastation_rebuild_in_progress"
+echo "${TARGET_DISK#Disk }" > "$REBUILD_FLAG"
+
 echo ""
 SPINNER_PID=""
 STEP_PREFIX=""
@@ -358,7 +361,12 @@ stop_spinner() {
         SPINNER_PID=""
     fi
 }
-trap stop_spinner EXIT INT TERM
+
+cleanup_rebuild() {
+    stop_spinner
+    rm -f "$REBUILD_FLAG"
+}
+trap cleanup_rebuild EXIT INT TERM
 
 step_start() {
     local msg="$1"

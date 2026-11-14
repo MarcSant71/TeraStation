@@ -426,6 +426,20 @@ def determine_storage_state(pool_name="storage"):
     if missing_disks:
         return STATE_ALERT, "** RAID ALERT **", f"FAIL: DISK {','.join(missing_disks)}"[:16]
 
+    # 1b. If 'rebuild' script is actively executing Steps [1/5]..[5/5], show REBUILD1 immediately
+    rebuild_flag = "/run/terastation_rebuild_in_progress"
+    if os.path.exists(rebuild_flag):
+        is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
+        if is_rebuilding:
+            return STATE_REBUILDING, rebuild_title, rebuild_detail
+        try:
+            with open(rebuild_flag, "r") as rf:
+                d_str = rf.read().strip()
+            t_str = f"REBUILD1: DISK {d_str}" if d_str.isdigit() else "REBUILD1: RAID  "
+        except Exception:
+            t_str = "REBUILD1: RAID  "
+        return STATE_REBUILDING, t_str[:16], "PREPARING...    "
+
     # 2. Check for ZFS faults when no ZFS resilver is actively running
     zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name)
     if not zfs_ok:
@@ -597,6 +611,7 @@ def main():
 
     last_sata_onoff = None
     last_sata_blink = None
+    last_rebuild_flag = os.path.exists("/run/terastation_rebuild_in_progress")
 
     shutdown_confirm_active = False
     shutdown_confirm_expire = 0.0
@@ -681,6 +696,13 @@ def main():
         # ----------------------------------------------------------------------
         # Normal Periodic Storage & UI Health Monitoring
         # ----------------------------------------------------------------------
+        # Trigger immediate LCD refresh when rebuild starts or finishes
+        rebuild_flag_now = os.path.exists("/run/terastation_rebuild_in_progress")
+        if rebuild_flag_now != last_rebuild_flag:
+            last_rebuild_flag = rebuild_flag_now
+            last_health_check = 0
+            last_ui_update = 0
+
         # Check health every CHECK_INTERVAL_SEC
         if now - last_health_check >= CHECK_INTERVAL_SEC:
             current_state, state_title, state_detail = determine_storage_state("storage")
