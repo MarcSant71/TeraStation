@@ -249,7 +249,7 @@ EOF
 )
     if [ -n "$zfs_space" ]; then
         read -r t_size u_size u_pct a_size a_pct <<< "$zfs_space"
-        printf "%-7s %-10s %-6s  %-24s %s\n" "POOL" "$POOL_NAME" "$t_size" "USED: $u_size ($u_pct)" "FREE: $a_size ($a_pct)"
+        printf "%-7s %-10s %-6s %-20s %s\n" "POOL" "$POOL_NAME" "$t_size" "USED: $u_size ($u_pct)" "FREE: $a_size ($a_pct)"
         echo -e "------------------------------------------------------------------------------"
     fi
 fi
