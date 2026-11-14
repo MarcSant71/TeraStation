@@ -370,14 +370,14 @@ step_start() {
 
     stop_spinner
     if [ -t 1 ]; then
-        printf "\r%s[ ${CYAN}||${NC} ]" "$STEP_PREFIX"
+        printf "\r%s[${CYAN}.   ${NC}]" "$STEP_PREFIX"
         (
-            local frames=('||' '//' '--' '\\')
+            local frames=('.   ' '..  ' ' .. ' '  ..' '   .' '  ..' ' .. ' '..  ')
             local i=0
             while true; do
-                printf "\r%s[ ${CYAN}%s${NC} ]" "$STEP_PREFIX" "${frames[$i]}"
-                i=$(( (i + 1) % 4 ))
-                sleep 0.15
+                printf "\r%s[${CYAN}%s${NC}]" "$STEP_PREFIX" "${frames[$i]}"
+                i=$(( (i + 1) % 8 ))
+                sleep 0.12
             done
         ) &
         SPINNER_PID=$!
