@@ -327,21 +327,17 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None, zfs_stdout=None)
     return False, "", ""
 
 
-def check_zfs_health(pool_name="storage"):
+def check_zfs_health(pool_name="storage", zfs_stdout=None):
     """
     Returns (is_healthy, status_summary, error_detail) in English.
     """
     try:
-        res = subprocess.run(
-            ['/sbin/zpool', 'status', pool_name],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if res.returncode != 0:
+        if zfs_stdout is None:
+            zfs_stdout = _get_zpool_status(pool_name)
+        if not zfs_stdout:
             return False, "POOL UNAVAIL", "CMD FAILED"
 
-        lines = res.stdout.splitlines()
+        lines = zfs_stdout.splitlines()
         state = "UNKNOWN"
         faulted_disks = []
 
@@ -539,7 +535,7 @@ def determine_storage_state(pool_name="storage"):
 
     # 2. Check for ZFS faults when no ZFS resilver is actively running
     zfs_stdout = _get_zpool_status(pool_name)
-    zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name)
+    zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name, zfs_stdout=zfs_stdout)
     if not zfs_ok:
         zfs_resilvering = ("resilver in progress" in zfs_stdout and "(resilvering)" in zfs_stdout)
         if not zfs_resilvering:
