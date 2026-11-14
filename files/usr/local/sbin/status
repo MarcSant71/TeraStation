@@ -126,7 +126,8 @@ for p in "${sorted_bays[@]}"; do
         dev_part3="${dev_path}3"
         dev_part4="${dev_path}4"
 
-        size=$(lsblk -d -n -o SIZE "$dev_path" 2>/dev/null || echo "N/A")
+        size=$(lsblk -d -n -o SIZE "$dev_path" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)
+        size="${size:-N/A}"
         model=$(lsblk -d -n -o MODEL "$dev_path" 2>/dev/null || echo "N/A")
         serial=$(lsblk -d -n -o SERIAL "$dev_path" 2>/dev/null || echo "N/A")
 
