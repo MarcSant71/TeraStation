@@ -253,7 +253,7 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None, zfs_stdout=None)
     if "resilver in progress" in zfs_stdout and "(resilvering)" in zfs_stdout:
         m = re.search(r'([0-9\.]+)%\s*done', zfs_stdout)
         pct = f"{float(m.group(1)):.1f}%" if m else "IN PROG"
-        title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: POOL  "
+        title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: RAID  "
         detail = f"PROGRESS: {pct:<6}"
         return True, title[:16], detail[:16]
     if "scrub in progress" in zfs_stdout:
