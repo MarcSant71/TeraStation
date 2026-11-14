@@ -136,15 +136,21 @@ def _get_zpool_status(pool_name="storage"):
 
 def _read_md_sync(md_name):
     """
-    Reads native kernel sysfs sync_action and sync_completed for an md device.
-    Returns (action, pct_float_or_None).
+    Reads native kernel sysfs sync_action, sync_completed, and degraded state for an md device.
+    Returns (action, pct_float_or_None, is_degraded).
     """
     md_dir = f"/sys/block/{md_name}/md"
+    is_degraded = False
+    try:
+        with open(os.path.join(md_dir, "degraded"), "r") as df:
+            is_degraded = int(df.read().strip()) > 0
+    except Exception:
+        pass
     try:
         with open(os.path.join(md_dir, "sync_action"), "r") as f:
             action = f.read().strip()
         if action not in ("recover", "resync"):
-            return action, None
+            return action, None, is_degraded
         with open(os.path.join(md_dir, "sync_completed"), "r") as f:
             comp = f.read().strip()
         if "/" in comp:
@@ -152,10 +158,10 @@ def _read_md_sync(md_name):
             done = int(done_s.strip())
             total = int(total_s.strip())
             if total > 0:
-                return action, (done / total) * 100.0
-        return action, None
+                return action, (done / total) * 100.0, is_degraded
+        return action, None, is_degraded
     except Exception:
-        return "idle", None
+        return "idle", None, is_degraded
 
 
 def _find_target_disk(zfs_stdout="", hint_disk=None):
@@ -227,26 +233,23 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None, zfs_stdout=None)
     if zfs_stdout is None:
         zfs_stdout = _get_zpool_status(pool_name)
 
-    act0, pct0 = _read_md_sync("md0")
-    act1, pct1 = _read_md_sync("md1")
+    act0, pct0, deg0 = _read_md_sync("md0")
+    act1, pct1, deg1 = _read_md_sync("md1")
     target_disk = _find_target_disk(zfs_stdout=zfs_stdout, hint_disk=hint_disk)
 
     # 1. Check MDADM resync / recovery via native sysfs counters
-    if pct0 is not None:
-        overall_pct = pct0 * 0.862
+    md_active = (pct0 is not None or pct1 is not None or act0 in ("recover", "resync") or act1 in ("recover", "resync"))
+    if md_active:
+        # When a spare disk is queued waiting for a parity resync, report 0.0% for that array until recover begins
+        p0 = pct0 if (pct0 is not None and not (act0 == "resync" and target_disk)) else (0.0 if deg0 else 100.0)
+        p1 = pct1 if (pct1 is not None and not (act1 == "resync" and target_disk)) else (0.0 if deg1 else 100.0)
+        if pct0 is not None or pct1 is not None:
+            overall_pct = (p0 * 0.862) + (p1 * 0.138)
+            val = f"{overall_pct:.1f}%"
+        else:
+            val = f"{'QUEUED':<6}"
         title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
-        val = f"{overall_pct:.1f}%"
         detail = f"PROGRESS: {val:<6}"
-        return True, title[:16], detail[:16]
-    if pct1 is not None:
-        overall_pct = 86.2 + (pct1 * 0.138)
-        title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
-        val = f"{overall_pct:.1f}%"
-        detail = f"PROGRESS: {val:<6}"
-        return True, title[:16], detail[:16]
-    if act0 in ("recover", "resync") or act1 in ("recover", "resync"):
-        title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
-        detail = f"PROGRESS: {'QUEUED':<6}"
         return True, title[:16], detail[:16]
 
     # 2. Check ZFS resilver or maintenance scrub

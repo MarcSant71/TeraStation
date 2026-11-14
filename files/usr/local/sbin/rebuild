@@ -456,23 +456,23 @@ step_ok
 # Step 2: Re-add Root partition (Debian OS /) to RAID-1 md0
 # ------------------------------------------------------------------------------
 step_start "[2/5] System RAID-1 mirror (md0 <- ${TARGET_DEV}2)"
-# Prioritize rebuilding the replacement disk over any background parity resync
+mdadm --manage /dev/md0 --add "${TARGET_DEV}2" >/dev/null 2>&1 || true
+# Cancel any ongoing parity resync AFTER adding spare so kernel switches directly to recover
 if [ "$(cat /sys/block/md0/md/sync_action 2>/dev/null)" == "resync" ]; then
     echo idle > /sys/block/md0/md/sync_action 2>/dev/null || true
 fi
-mdadm --manage /dev/md0 --add "${TARGET_DEV}2" >/dev/null 2>&1 || true
 step_ok
 
 # ------------------------------------------------------------------------------
 # Step 3: Re-add Swap partition to RAID-1 md1
 # ------------------------------------------------------------------------------
 step_start "[3/5] Swap RAID-1 mirror (md1 <- ${TARGET_DEV}3)"
-if [ "$(cat /sys/block/md1/md/sync_action 2>/dev/null)" == "resync" ]; then
-    echo idle > /sys/block/md1/md/sync_action 2>/dev/null || true
-fi
 mdadm --manage /dev/md1 --add "${TARGET_DEV}3" >/dev/null 2>&1 || true
 mdadm --readwrite /dev/md0 >/dev/null 2>&1 || true
 mdadm --readwrite /dev/md1 >/dev/null 2>&1 || true
+if [ "$(cat /sys/block/md1/md/sync_action 2>/dev/null)" == "resync" ]; then
+    echo idle > /sys/block/md1/md/sync_action 2>/dev/null || true
+fi
 step_ok
 
 # ------------------------------------------------------------------------------
