@@ -429,15 +429,21 @@ def determine_storage_state(pool_name="storage"):
     # 1b. If 'rebuild' script is actively executing Steps [1/5]..[5/5], show REBUILD1 immediately
     rebuild_flag = "/run/terastation_rebuild_in_progress"
     if os.path.exists(rebuild_flag):
-        is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
-        if is_rebuilding:
-            return STATE_REBUILDING, rebuild_title, rebuild_detail
+        flag_disk = ""
         try:
             with open(rebuild_flag, "r") as rf:
                 d_str = rf.read().strip()
-            t_str = f"REBUILD1: DISK {d_str}" if d_str.isdigit() else "REBUILD1: RAID  "
+                if d_str.isdigit():
+                    flag_disk = d_str
         except Exception:
-            t_str = "REBUILD1: RAID  "
+            pass
+        is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
+        if is_rebuilding:
+            if flag_disk and rebuild_title.strip() in ["REBUILD1: RAID", "REBUILD2: POOL"]:
+                phase = "REBUILD2" if rebuild_title.startswith("REBUILD2") else "REBUILD1"
+                rebuild_title = f"{phase}: DISK {flag_disk}"[:16]
+            return STATE_REBUILDING, rebuild_title, rebuild_detail
+        t_str = f"REBUILD1: DISK {flag_disk}" if flag_disk else "REBUILD1: RAID  "
         return STATE_REBUILDING, t_str[:16], "PROGRESS: 0.0%  "
 
     # 2. Check for ZFS faults when no ZFS resilver is actively running
