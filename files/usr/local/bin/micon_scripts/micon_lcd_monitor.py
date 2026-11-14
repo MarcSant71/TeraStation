@@ -426,15 +426,22 @@ def determine_storage_state(pool_name="storage"):
     if missing_disks:
         return STATE_ALERT, "** RAID ALERT **", f"FAIL: DISK {','.join(missing_disks)}"[:16]
 
-    # 2. Check if an active rebuild or maintenance scrub is in progress
+    # 2. Check for ZFS faults when no ZFS resilver is actively running
+    zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name)
+    if not zfs_ok:
+        zfs_resilvering = False
+        try:
+            zres = subprocess.run(['/sbin/zpool', 'status', pool_name], capture_output=True, text=True, timeout=5)
+            zfs_resilvering = ("resilver in progress" in zres.stdout and "(resilvering)" in zres.stdout)
+        except Exception:
+            pass
+        if not zfs_resilvering:
+            return STATE_ALERT, "** ZFS ALERT **", zfs_detail if zfs_detail else f"STATE: {zfs_status}"
+
+    # 3. Check if an active rebuild or maintenance scrub is in progress
     is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
     if is_rebuilding:
         return STATE_REBUILDING, rebuild_title, rebuild_detail
-
-    # 3. Check for faults in ZFS
-    zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name)
-    if not zfs_ok:
-        return STATE_ALERT, "** ZFS ALERT **", zfs_detail if zfs_detail else f"STATE: {zfs_status}"
 
     # 4. Check for faults in MDADM (Debian OS mirror)
     md_ok, md_detail = check_mdstat_health()
