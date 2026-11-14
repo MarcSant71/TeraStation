@@ -53,13 +53,15 @@ Compared to vanilla Debian or generic NAS distributions, this suite introduces t
   * **2nd Press (within 6s):** Emits a confirmation beep and cleanly triggers `/bin/systemctl poweroff`.
   * **Timeout (no 2nd press):** Cancels the request with a gentle notification beep and smoothly restores normal LCD status without interrupting any storage I/O.
 
-### 2. Monotonic Rebuild & Background Maintenance Scrub on LCD
+### 2. Monotonic Rebuild, Tray LEDs & Background Maintenance Scrub on LCD
 * **The Problem:** 
-  1. Because Debian mirrors the OS across all drives using two software RAID slices (`md0` rootfs ~86% and `md1` swap ~14%), the stock LCD monitor counted from 0% to 100% on root and then abruptly reset to 0% for swap, giving users the false impression that resync failed or restarted.
-  2. Vanilla Debian defaults ZFS maintenance scrubs to every month, creating unnecessary mechanical wear on 8-drive arrays, while lacking any front-panel notification.
+  1. Because Debian mirrors the OS across all drives using two software RAID slices (`md0` rootfs ~86.2% and `md1` swap ~13.8%), the stock LCD monitor counted from 0% to 100% on root and then abruptly reset to 0% for swap, giving users the false impression that resync failed or restarted.
+  2. Linux `sysfs` `sync_completed` only advances on periodic kernel checkpoints (~60–90s), while heavy `zpool replace` operations can hold ZFS configuration locks and block synchronous `zpool status` calls, freezing the LCD at `0.0%`.
+  3. Vanilla Debian defaults ZFS maintenance scrubs to every month, creating unnecessary mechanical wear on 8-drive arrays, while lacking any front-panel notification.
 * **The Solution:** 
-  * **Linear Rebuild:** A weighted linear algorithm computes a continuous progress bar from 0.0% to 100.0%, maintaining strict vertical alignment of the colons (`:`) on the 16x2 character display.
-  * **Quarterly Scrub Cadence & Live Monitoring:** Replaces Debian's aggressive monthly schedule with an enterprise quarterly cadence (`/etc/cron.d/zfsutils-linux` set to February, May, August, November), reducing annual disk wear by 66%. Detects active ZFS pool scrubs (`zpool scrub`), automatically illuminates the LCD backlight in **Solid Amber**, turns ON the chassis Info LED, sounds a discreet start chime, and streams live percentage completion (`POOL SCRUB / PROGRESS: XX.X%`). Emits a completion chime and restores the healthy carousel upon finish. Disables false alarms while immediately escalating to Red Alert if any drive fails.
+  * **Real-Time Monotonic Rebuild:** Reads live `/proc/mdstat` byte counters combined with native `sysfs` array state (`sync_action`/`degraded`) to stream a continuous `(md0 * 0.862) + (md1 * 0.138)` percentage (`0.0%`–`100.0%`) during `REBUILD1` before seamlessly transitioning to ZFS resilver progress (`REBUILD2`). An active flag (`/run/terastation_rebuild_in_progress`) switches the LCD immediately when `rebuild` starts, cancels background `resync` after adding spares, and uses a non-blocking 3s deadline for `zpool status` so ZFS locks never freeze the LCD loop.
+  * **Per-Bay Tray LED State Machine:** Drives the front bay LEDs (`SATA_LED_ONOFF` / `SATA_LED_BLINK`) individually: healthy drives stay **Solid Green**, only the actively rebuilding/resilvering bay **Blinks Green**, and any failed or degraded-missing bay **Blinks Red**. Cached bay mappings (`_DISK_NUM_CACHE`) prevent transient raw `sdX` device names from appearing in LCD alerts during hot-unplug `udev` races.
+  * **Quarterly Scrub Cadence & Live Monitoring:** Replaces Debian's aggressive monthly schedule with an enterprise quarterly cadence (`/etc/cron.d/zfsutils-linux` set to February, May, August, November), reducing annual disk wear by 66%. Detects active ZFS pool scrubs (`zpool scrub`), automatically illuminates the LCD backlight in **Solid Amber**, turns ON the chassis Info LED, sounds a discreet start chime, and streams live percentage completion (`POOL SCRUB / PROGRESS: XX.X%`). Emits a completion chime and restores the healthy carousel upon finish. Disables false alarms while immediately escalating to Alert state if any drive fails.
 
 ### 3. Instant Early Kernel/Initramfs Splash Screen
 * **The Solution:** An initramfs-tools hook (`/etc/initramfs-tools/hooks/terastation_lcd` and `scripts/init-top/terastation_lcd`) runs at second 1 of the Linux kernel (right after BIOS handoff), lighting the LCD in **Solid Aqua/White (`0x07`)** with `TeraStation / Loading OS...`. Decreases GRUB timeout to 1 second for ultra-fast boot transition.
@@ -75,8 +77,8 @@ Compared to vanilla Debian or generic NAS distributions, this suite introduces t
 * Disabled open demo mode (`generate_node_acls=0`) and mapped the LUN exclusively to the authorized host initiator IQN. Blocks unauthorized network devices from connecting concurrently, eliminating the risk of NTFS filesystem corruption over shared block storage.
 
 ### 7. Guided Disk Management Utilities (`status` and `rebuild`)
-* **/usr/local/sbin/status:** Displays an interactive visual grid of the drive bays, showing drive models, serial numbers, capacity, OS mirrors (`md0`/`md1`), and ZFS pool health. Automatically senses the motherboard's physical SATA port count (dynamically adapting between 2, 4, 6, and 8-bay appliances) and distinguishes intentionally empty bays (`UNPOPULATED`) from true drive failures (`NO DISK`).
-* **/usr/local/sbin/rebuild:** Automated disk replacement tool that clones the factory MBR partition table, synchronizes OS mirrors, reintegrates the data slice into ZFS, and installs GRUB across all drive MBRs to guarantee boot redundancy from any bay.
+* **/usr/local/sbin/status:** Displays an aligned interactive grid of physical drive bays (`BAY`: `Bay 1..8`) and kernel disks (`DISK`: `/dev/sdX`), showing capacity, drive models, serial numbers, OS mirrors (`md0`/`md1`), ZFS pool health, and `POOL` usage (`USED` / `FREE`) aligned to the table columns. Automatically senses the motherboard's physical SATA port count (2, 4, 6, or 8-bay appliances), accurately flags faulted ZFS vdevs as `FAILED`, and distinguishes intentionally empty bays (`UNPOPULATED`) from true drive failures (`NO DISK` / `No disk in Bay X`).
+* **/usr/local/sbin/rebuild:** Automated disk replacement tool supporting physical bay numbers (`rebuild 1`..`8`), device paths, or automatic single-failed-disk detection. Includes safeguards that refuse to wipe healthy or already-resilvering drives, displays a clean aligned confirmation summary with a non-blocking terminal progress spinner, clones the GPT partition table, synchronizes OS mirrors (`md0`/`md1`), handles hot-swap drive letter shifts cleanly when reintegrating into ZFS, and installs GRUB across the replacement drive MBR to guarantee boot redundancy from any bay.
 
 ### 8. Surgical ZFS ARC Memory Calibration for 2 GB RAM
 * Configured in `/etc/modprobe.d/zfs.conf` with `zfs_arc_max=1288490188` (1.2 GB cap). Prevents out-of-memory (OOM) kernel panics and allowed the Atom D2700 with only 2 GB of RAM to perform a non-stop 5 TB restore with **0 bytes of swap used** and an idle OS footprint of just 290 MB.
@@ -123,16 +125,16 @@ Below are the ASCII representations of the front LCD display screens managed by 
 ================================================================================
 +----------------+     +----------------+
 |REBUILD1: DISK 3|     |   POOL SCRUB   |  (REBUILD1=OS md0/md1, REBUILD2=ZFS;
-|PROGRESS: 47.8% | <-> |PROGRESS: 49.4% |   Emits chime on start and completion;
+|PROGRESS: 47.8% | <-> |PROGRESS: 49.4% |   Rebuilding bay blinks GREEN, others solid GREEN;
 +----------------+     +----------------+   Amber Info LED ON, Error LED OFF)
 
 ================================================================================
-5. Critical Hardware Alarm - Backlight: BLINKING RED (0x01) + AUDIBLE BUZZER
+5. Critical Hardware Alarm - Backlight: SOLID AMBER (0x03) + BLINKING ERROR LED
 ================================================================================
 +----------------+
-|** RAID ALERT **|  (Indicates degraded array or missing drive;
-| FAIL: DISK 3   |   Corresponding tray LED turns solid red on chassis)
-+----------------+
+|** RAID ALERT **|  (Indicates degraded array, faulted vdev, or missing drive;
+|  FAIL: DISK 3  |   Failed/missing tray LED blinks RED; front ERROR LED blinks;
++----------------+   3 sharp beeps on entry + reminder beep every 60s)
 
 ================================================================================
 6. Power Button Safety (1st Press) - Backlight: SOLID AMBER (0x03) + BEEP

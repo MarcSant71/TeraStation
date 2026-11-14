@@ -33,8 +33,8 @@ tar -xzf terastation_customizations.tar.gz -C /tmp/
 sudo ./install.sh
 
 The 'install.sh' script automatically applies:
-- 'status' and 'rebuild' scripts in /usr/local/sbin
-- MICON daemons (LCD, health monitor, beeper, clean shutdown)
+- 'status' and 'rebuild' utilities in /usr/local/sbin (BAY/DISK grid, safeguards, spinner)
+- MICON daemons (live mdstat/ZFS LCD progress, per-bay LEDs, clean shutdown)
 - Early splash screen hook at second 1 of initramfs ('Loading OS...')
 - GRUB configuration (1s timeout)
 - Systemd services (micon_boot, lcd_monitor, hotswap) and shutdown hook
@@ -60,8 +60,9 @@ sudo systemctl restart micon_boot.service lcd_monitor.service hotswap.service
 Run:
 status
 
-The LCD screen will resume rotating system metrics every 5 seconds (Green),
-boot will display 'Loading OS...' in Aqua at second 1, shutdown will show
-'Shutting Down...' in Amber, and Windows will mount the 18 TB iSCSI drive as
-'BUFFALO Storage SCSI Disk Device'.
+The LCD screen will rotate system metrics every 5 seconds (Green when healthy),
+show live rebuild/resilver progress (Amber, rebuilding bay blinking Green) and
+RAID alerts (Amber LCD, blinking ERROR LED, failed bay blinking Red), display
+'Loading OS...' in Aqua at boot, show 'Shutting Down...' in Amber on poweroff,
+and expose the 18 TB iSCSI drive as 'BUFFALO Storage SCSI Disk Device'.
 ================================================================================
