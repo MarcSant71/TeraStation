@@ -412,10 +412,26 @@ echo -e "${GREEN}  -> [OK] GRUB bootloader installed successfully.${NC}"
 echo -e "${BOLD}[5/5] Integrating ${TARGET_DEV}4 into ZFS pool '$POOL_NAME'...${NC}"
 
 OLD_TARGET=$(python3 - << EOF
-import subprocess, sys
+import os, subprocess, sys
 
 pool_name = "$POOL_NAME"
-target_part = "${CLEAN_DEV}4"
+clean_dev = "$CLEAN_DEV"
+target_part = f"{clean_dev}4"
+
+# Map all other physically present bays so hot-swap letter shifts (e.g. sdg -> sdi) are detected
+bay_paths = [
+    "pci-0000:00:1f.2-ata-1", "pci-0000:00:1f.2-ata-2",
+    "pci-0000:00:1f.2-ata-3", "pci-0000:00:1f.2-ata-4",
+    "pci-0000:00:1f.2-ata-5", "pci-0000:00:1f.2-ata-6",
+    "pci-0000:01:00.0-ata-1", "pci-0000:01:00.0-ata-2",
+]
+other_bay_parts = set()
+for p in bay_paths:
+    lp = f"/dev/disk/by-path/{p}"
+    if os.path.islink(lp):
+        dev = os.path.basename(os.path.realpath(lp))
+        if dev != clean_dev:
+            other_bay_parts.add(f"{dev}4")
 
 res = subprocess.run(['/sbin/zpool', 'status', pool_name], capture_output=True, text=True)
 lines = res.stdout.splitlines()
@@ -423,27 +439,46 @@ lines = res.stdout.splitlines()
 # 1. Search for 'was /dev/target_part' or 'was target_part'
 for line in lines:
     if f'was /dev/{target_part}' in line or f'was {target_part}' in line:
-        parts = line.strip().split()
-        print(parts[0])
+        print(line.strip().split()[0])
         sys.exit(0)
 
-# 2. Search for GUID of disk that is UNAVAIL/FAULTED
+# 2. Search for any vdev (GUID or sdX4) that is UNAVAIL/FAULTED/OFFLINE/REMOVED
 for line in lines:
     parts = line.strip().split()
-    if len(parts) >= 2 and parts[0].isdigit() and parts[1] in ['UNAVAIL', 'FAULTED', 'OFFLINE']:
+    if len(parts) >= 2 and parts[1] in ['UNAVAIL', 'FAULTED', 'OFFLINE', 'REMOVED']:
+        if parts[0].isdigit() or parts[0].startswith('sd'):
+            print(parts[0])
+            sys.exit(0)
+
+# 3. Hot-swap shifted letter: find sdX4 in pool that no longer maps to any other physical bay
+for line in lines:
+    parts = line.strip().split()
+    if len(parts) >= 2 and parts[0].startswith('sd') and parts[0] != target_part and parts[0] not in other_bay_parts:
         print(parts[0])
         sys.exit(0)
 
-# Fallback to dev name itself
+# 4. Fallback to target partition name itself
 print(target_part)
 EOF
 )
 
 echo -e "  Replacing vdev '$OLD_TARGET' with '${TARGET_DEV}4'..."
-zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>/dev/null || zpool replace -f "$POOL_NAME" "${TARGET_DEV}4" 2>/dev/null || zpool online "$POOL_NAME" "${TARGET_DEV}4" 2>/dev/null || true
-zpool clear "$POOL_NAME" 2>/dev/null || true
+ZFS_ERR=""
+if ! ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>&1); then
+    if [ "$OLD_TARGET" != "${CLEAN_DEV}4" ]; then
+        zpool offline "$POOL_NAME" "$OLD_TARGET" >/dev/null 2>&1 || true
+        ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "${TARGET_DEV}4" 2>&1) || {
+            echo -e "${RED}[ERROR] ZFS replace failed: $ZFS_ERR${NC}"
+            exit 1
+        }
+    else
+        echo -e "${RED}[ERROR] ZFS replace failed: $ZFS_ERR${NC}"
+        exit 1
+    fi
+fi
 
-echo -e "${GREEN}  -> [OK] ZFS pool synchronized successfully!${NC}"
+zpool clear "$POOL_NAME" >/dev/null 2>&1 || true
+echo -e "${GREEN}  -> [OK] ZFS pool resilver triggered successfully!${NC}"
 
 echo -e "\n${CYAN}================================================================================${NC}"
 echo -e "${GREEN}${BOLD}       PROCESS COMPLETED! DISK RE-INTEGRATED SUCCESSFULLY                       ${NC}"
