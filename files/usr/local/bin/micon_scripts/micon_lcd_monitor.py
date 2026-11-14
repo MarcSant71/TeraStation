@@ -195,7 +195,7 @@ def check_rebuild_progress(pool_name="storage"):
             text=True,
             timeout=5
         )
-        if "resilver in progress" in res.stdout:
+        if "resilver in progress" in res.stdout and "(resilvering)" in res.stdout:
             zfs_disk = target_disk
             if not zfs_disk:
                 for line in res.stdout.splitlines():
@@ -402,12 +402,7 @@ def determine_storage_state(pool_name="storage"):
     Determines overall storage state:
     Returns (state_id, title_str, detail_str)
     """
-    # 1. Check if a rebuild is in progress
-    is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
-    if is_rebuilding:
-        return STATE_REBUILDING, rebuild_title, rebuild_detail
-
-    # 2. Check for missing / pulled disks
+    # 1. Check for missing / pulled disks first (even during rebuild/scrub)
     missing_disks = []
     for disk_num, p_id, _ in BAYS:
         link_path = f"/dev/disk/by-path/{p_id}"
@@ -415,6 +410,11 @@ def determine_storage_state(pool_name="storage"):
             missing_disks.append(str(disk_num))
     if missing_disks:
         return STATE_ALERT, "** RAID ALERT **", f"FAIL: DISK {','.join(missing_disks)}"[:16]
+
+    # 2. Check if an active rebuild or maintenance scrub is in progress
+    is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
+    if is_rebuilding:
+        return STATE_REBUILDING, rebuild_title, rebuild_detail
 
     # 3. Check for faults in ZFS
     zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name)
