@@ -21,10 +21,10 @@ Emulates authentic Buffalo TeraStation firmware front panel behavior:
      * Automatically returns to Rebuild progress after 15s timeout.
    - Silent: No buzzer alarm.
 
-3. BLINKING RED (CRITICAL ALERT):
+3. ORANGE + BLINKING ERROR LED (CRITICAL ALERT):
    - Disk faulted, missing, unallocated, or degraded (when NO rebuild is active).
-   - Backlight: BLINKING RED.
-   - Front LEDs: ERROR=ON, INFO=OFF.
+   - Backlight: Solid ORANGE (for clear readability).
+   - Front LEDs: ERROR=BLINK, INFO=OFF.
    - Drive Tray LEDs: Failed or empty bay lights up RED (Green OFF); healthy bays remain Green Solid.
    - Screen: LOCKED on alert message ("** RAID ALERT **" / "FAIL: DISK X").
      * Pressing DISPLAY shows IP/Clock.
@@ -772,7 +772,7 @@ def main():
 
                 else:
                     # --------------------------------------------------------------
-                    # ALERT STATE (BLINKING RED)
+                    # ALERT STATE (SOLID ORANGE LCD + BLINKING ERROR LED)
                     # --------------------------------------------------------------
                     micon.set_lcd_buffer(libmicon.lcd_set_buffer0, state_title.center(16)[:16], state_detail.center(16)[:16])
 
@@ -782,10 +782,10 @@ def main():
                         micon.cmd_force_lcd_disp(libmicon.lcd_disp_buffer0)       # lock on Buffer 0
                         micon.set_lcd_brightness(libmicon.LCD_BRIGHT_FULL)
 
-                        # BLINKING RED LCD Backlight, ERROR_LED ON, INFO_LED OFF
+                        # Solid ORANGE LCD Backlight, ERROR_LED BLINKING, INFO_LED OFF
                         micon.send_write_cmd(2, libmicon.CMD_LED_CPU, bytearray([0x06, 0x07]))
-                        micon.send_write_cmd(2, libmicon.CMD_LED_ONOFF, bytearray([0x04, 0x01]))
-                        micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x00, 0x01]))
+                        micon.send_write_cmd(2, libmicon.CMD_LED_ONOFF, bytearray([0x04, 0x03]))
+                        micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x04, 0x00]))
 
                         # Audible Alarm: 3 sharp beeps on entry
                         for _ in range(3):
