@@ -144,9 +144,10 @@ def _get_zpool_status(pool_name="storage"):
         return ""
 
 
-def _read_md_sync(md_name):
+def _read_md_sync(md_name, mdstat_content=None):
     """
-    Reads native kernel sysfs sync_action, sync_completed, and degraded state for an md device.
+    Reads native kernel sysfs sync_action/degraded and real-time /proc/mdstat
+    progress (falling back to sysfs sync_completed) for an md device.
     Returns (action, pct_float_or_None, is_degraded).
     """
     md_dir = f"/sys/block/{md_name}/md"
@@ -161,6 +162,27 @@ def _read_md_sync(md_name):
             action = f.read().strip()
         if action not in ("recover", "resync"):
             return action, None, is_degraded
+
+        # /proc/mdstat updates live every second, whereas sysfs sync_completed only
+        # advances on periodic kernel checkpoints (~60-90s). Prefer /proc/mdstat.
+        if mdstat_content is None:
+            try:
+                with open("/proc/mdstat", "r") as mf:
+                    mdstat_content = mf.read()
+            except Exception:
+                mdstat_content = ""
+        if mdstat_content:
+            m_blk = re.search(rf'(?ms)^{re.escape(md_name)}\s*:.*?(?=^\S|\Z)', mdstat_content)
+            if m_blk:
+                blk = m_blk.group(0)
+                m_prog = re.search(r'(?:recovery|resync)\s*=\s*([0-9.]+)%\s*\((\d+)/(\d+)\)', blk)
+                if m_prog:
+                    done_kb = int(m_prog.group(2))
+                    total_kb = int(m_prog.group(3))
+                    if total_kb > 0:
+                        return action, (done_kb / total_kb) * 100.0, is_degraded
+                    return action, float(m_prog.group(1)), is_degraded
+
         with open(os.path.join(md_dir, "sync_completed"), "r") as f:
             comp = f.read().strip()
         if "/" in comp:
@@ -440,10 +462,12 @@ def compute_sata_led_masks(pool_name="storage"):
                 except Exception:
                     pass
 
-        # 2. ZFS rebuild check (resilvering or replacing)
-        if "resilver in progress" in zfs_raw:
-            if f"{dev_name}4" in zfs_raw and ("resilver" in zfs_raw or "replacing" in zfs_raw):
-                is_rebuilding = True
+        # 2. ZFS rebuild check (resilvering or replacing) - match only this bay's device line
+        if zfs_raw and "resilver in progress" in zfs_raw:
+            for z_line in zfs_raw.splitlines():
+                if re.search(rf'\b{re.escape(dev_name)}4\b', z_line) and ("(resilvering)" in z_line or "resilver" in z_line):
+                    is_rebuilding = True
+                    break
 
         # 3. MDADM / ZFS failure check (only if not actively rebuilding)
         if not is_rebuilding:
