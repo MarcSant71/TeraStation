@@ -449,7 +449,7 @@ def compute_sata_led_masks(pool_name="storage"):
         if not is_rebuilding:
             if (f"{dev_name}2" not in md_raw) or (f"{dev_name}3" not in md_raw):
                 is_failed = True
-            if f"{dev_name}4" not in zfs_raw or f"{dev_name}4  FAULTED" in zfs_raw or f"{dev_name}4  UNAVAIL" in zfs_raw:
+            if zfs_raw and (f"{dev_name}4" not in zfs_raw or f"{dev_name}4  FAULTED" in zfs_raw or f"{dev_name}4  UNAVAIL" in zfs_raw):
                 is_failed = True
 
         if is_rebuilding:
