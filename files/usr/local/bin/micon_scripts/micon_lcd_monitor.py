@@ -436,7 +436,7 @@ def determine_storage_state(pool_name="storage"):
         except Exception:
             pass
         if not zfs_resilvering:
-            return STATE_ALERT, "** ZFS ALERT **", zfs_detail if zfs_detail else f"STATE: {zfs_status}"
+            return STATE_ALERT, "** RAID ALERT **", zfs_detail if zfs_detail else f"STATE: {zfs_status}"
 
     # 3. Check if an active rebuild or maintenance scrub is in progress
     is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
