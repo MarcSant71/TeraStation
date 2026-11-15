@@ -14,7 +14,6 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # ANSI Colors
 RED='\033[1;31m'
-BLINK_RED='\033[1;5;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[1;36m'
@@ -185,7 +184,7 @@ init_storage() {
     if [ -t 1 ]; then
         clear
     fi
-    echo -e "                      ${RED}WARNING: ${BLINK_RED}COMPLETE RAID DATA ERASE${NC}"
+    echo -e "                      ${RED}WARNING: COMPLETE RAID DATA ERASE${NC}"
     echo ""
     echo -e "${RED}------------------------------[ READ CAREFULLY ]------------------------------${NC}"
     echo -e "This procedure is intended for ${BOLD}DISASTER RECOVERY${NC} (loss of 2+ disks),"
