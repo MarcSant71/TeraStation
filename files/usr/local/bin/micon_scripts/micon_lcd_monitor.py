@@ -290,8 +290,15 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
     act1, pct1, deg1 = _read_md_sync("md1", mdstat)
     act2, pct2, deg2 = _read_md_sync("md2", mdstat)
 
-    md_sys_active = (pct0 is not None or pct1 is not None or act0 in ("recover", "resync") or act1 in ("recover", "resync"))
-    md_data_active = (pct2 is not None or act2 in ("recover", "resync"))
+    md_sys_active = (
+        pct0 is not None
+        or pct1 is not None
+        or act0 in ("recover", "resync")
+        or act1 in ("recover", "resync")
+        or _md_has_spare("md0")
+        or _md_has_spare("md1")
+    )
+    md_data_active = (pct2 is not None or act2 in ("recover", "resync") or _md_has_spare("md2"))
 
     if not md_sys_active and not md_data_active:
         return False, "", ""
