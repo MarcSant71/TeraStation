@@ -131,8 +131,15 @@ chmod 644 /etc/systemd/system/micon_boot.service /etc/systemd/system/lcd_monitor
 systemctl daemon-reload
 systemctl enable micon_boot.service lcd_monitor.service hotswap.service
 
+# Configura e habilita monitoramento SMART dos discos (smartmontools)
+if [ -f "${FILES_DIR}/etc/smartd.conf" ]; then
+    cp -a "${FILES_DIR}/etc/smartd.conf" /etc/smartd.conf
+    chmod 644 /etc/smartd.conf
+fi
+systemctl enable --now smartmontools.service 2>/dev/null || true
+
 # Desativa servicos e timers redundantes/inuteis no appliance
-systemctl disable --now smartmontools fancontrol.service e2scrub_all.timer e2scrub_reap.service fstrim.timer man-db.timer apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl disable --now fancontrol.service e2scrub_all.timer e2scrub_reap.service fstrim.timer man-db.timer apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 echo "      [OK] Servicos oficiais habilitados e servicos redundantes desativados."
 
 # 6. iSCSI Target Config (targetcli) e Customizacao SCSI Vendor BUFFALO
