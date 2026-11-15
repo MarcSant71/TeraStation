@@ -52,10 +52,9 @@ all_bays=(
 # Dynamically slice bay list to match physical motherboard capacity
 sorted_bays=("${all_bays[@]:0:$TOTAL_BAYS}")
 
-echo -e "${CYAN}==============================================================================${NC}"
-echo -e "${BOLD}       TeraStation TS5800D - Disk Map and Health Diagnostics                  ${NC}"
-echo -e "${CYAN}==============================================================================${NC}"
-echo -e "${CYAN}${BOLD}DISKS${NC}"
+echo -e "${BOLD}            TeraStation TS5800D - Disk Map and Health Diagnostics${NC}"
+echo ""
+echo -e "${CYAN}----------------------------------[ DISKS ]-----------------------------------${NC}"
 printf "%-7s %-10s %-6s %-20s %-16s %s\n" "BAY" "DISK" "SIZE" "MODEL" "SERIAL" "STATUS"
 echo -e "------------------------------------------------------------------------------"
 
@@ -204,8 +203,7 @@ for p in "${sorted_bays[@]}"; do
     fi
 done
 
-echo -e "------------------------------------------------------------------------------"
-echo -e "${CYAN}${BOLD}VOLUMES${NC}"
+echo -e "${CYAN}---------------------------------[ VOLUMES ]----------------------------------${NC}"
 printf "%-7s %-10s %-6s %-20s %-16s %s\n" "TYPE" "DEVICE" "SIZE" "ARRAY" "INFO" "STATUS"
 echo -e "------------------------------------------------------------------------------"
 
@@ -341,4 +339,3 @@ else
     echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized across md0, md1, and md2.${NC}"
 fi
 echo -e "To replace a failed disk or view recovery options, run: ${GREEN}rebuild${NC}"
-echo -e "${CYAN}==============================================================================${NC}"
