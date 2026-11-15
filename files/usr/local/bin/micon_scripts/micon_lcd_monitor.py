@@ -316,7 +316,7 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
         overall_pct = (p0 * 0.862) + (p1 * 0.138)
         val = f"{overall_pct:.1f}%"
         if (act0 == "check" or act1 == "check") and not target_disk:
-            title = "CHECK: OS MIRROR"
+            title = "RAID CHECK: OS  "
         else:
             title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
         detail = f"PROGRESS: {val:<6}"
@@ -327,7 +327,7 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
         target_disk = _find_target_disk(hint_disk=hint_disk, md_names=("md2", "md0", "md1"))
         val = f"{pct2:.1f}%"
         if act2 == "check" and not target_disk:
-            title = "CHECK: RAID-5   "
+            title = "RAID CHECK: DATA"
         else:
             title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: RAID  "
         detail = f"PROGRESS: {val:<6}"
@@ -336,7 +336,7 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
     # 3. Fallback when an array is queued/starting without active percentage yet
     target_disk = _find_target_disk(hint_disk=hint_disk)
     if not target_disk and (act0 == "check" or act1 == "check" or act2 == "check"):
-        title = "CHECK: RAID     "
+        title = "RAID CHECK:     "
     else:
         stage = "REBUILD1" if md_sys_queued else "REBUILD2"
         title = f"{stage}: DISK {target_disk}" if target_disk else f"{stage}: RAID  "
