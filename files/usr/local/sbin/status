@@ -65,12 +65,14 @@ REBUILD_CANDIDATE_DISK=""
 REBUILDING_DEV=""
 REBUILDING_DISK=""
 REBUILDING_DISKS=()
+OS_REBUILDING_DISKS=()
+MD2_REBUILDING_DISKS=()
 REBUILDING_COUNT=0
 FAILED_COUNT=0
 EMPTY_DISKS=()
 
-REBUILD_PCT=$(python3 - << 'EOF'
-import subprocess, re
+read -r REBUILD_STAGE REBUILD_PCT <<< "$(python3 - << 'EOF'
+import re
 
 mdstat = ""
 try:
@@ -88,14 +90,14 @@ m2 = re.search(r'(recovery|resync)\s*=\s*([0-9\.]+)%', b2.group(0)) if b2 else N
 
 if m0:
     pct0 = float(m0.group(2))
-    print(f"{pct0 * 0.862:.1f}%")
+    print(f"1 {pct0 * 0.862:.1f}%")
 elif m1:
     pct1 = float(m1.group(2))
-    print(f"{86.2 + (pct1 * 0.138):.1f}%")
+    print(f"1 {86.2 + (pct1 * 0.138):.1f}%")
 elif m2:
-    print(f"{float(m2.group(2)):.1f}%")
+    print(f"2 {float(m2.group(2)):.1f}%")
 EOF
-)
+)"
 
 if [ -z "$REBUILD_PCT" ]; then
     for md in md0 md1 md2; do
@@ -128,6 +130,8 @@ for p in "${sorted_bays[@]}"; do
         status_text="${GREEN}ONLINE${NC}"
         is_failed=0
         is_rebuilding=0
+        is_os_rebuilding=0
+        is_md2_rebuilding=0
 
         # Check if this disk is actively rebuilding in active md0, md1, or md2
         for md_part in "md0:${dev_name}2" "md1:${dev_name}3" "md2:${dev_name}4"; do
@@ -139,6 +143,11 @@ for p in "${sorted_bays[@]}"; do
             if [ -f "/sys/block/$md/md/dev-${part}/state" ]; then
                 if grep -q "spare" "/sys/block/$md/md/dev-${part}/state" 2>/dev/null; then
                     is_rebuilding=1
+                    if [ "$md" == "md2" ]; then
+                        is_md2_rebuilding=1
+                    else
+                        is_os_rebuilding=1
+                    fi
                 fi
             fi
         done
@@ -147,6 +156,7 @@ for p in "${sorted_bays[@]}"; do
         if [ ! -f "/run/terastation_rebuild_in_progress" ]; then
             if grep -q -E "\b${dev_name}4\[[0-9]+\]\(F\)" <<< "$mdstat_raw"; then
                 is_rebuilding=0
+                is_md2_rebuilding=0
             fi
         fi
 
@@ -154,6 +164,8 @@ for p in "${sorted_bays[@]}"; do
             status_text="${YELLOW}REBUILD${NC}"
             REBUILDING_COUNT=$((REBUILDING_COUNT + 1))
             REBUILDING_DISKS+=("$disk_label")
+            [ "$is_os_rebuilding" -eq 1 ] && OS_REBUILDING_DISKS+=("$disk_label")
+            [ "$is_md2_rebuilding" -eq 1 ] && MD2_REBUILDING_DISKS+=("$disk_label")
             if [ -z "$REBUILDING_DEV" ]; then
                 REBUILDING_DEV="$dev_path"
                 REBUILDING_DISK="$disk_label"
@@ -324,7 +336,23 @@ elif [ "$REBUILDING_COUNT" -gt 0 ]; then
     fi
     rebuilding_list=$(printf "%s, " "${REBUILDING_DISKS[@]}")
     rebuilding_list="${rebuilding_list%, }"
-    if [ "$os_rebuilding" -eq 1 ]; then
+    if [ "$REBUILD_STAGE" == "1" ]; then
+        if [ ${#OS_REBUILDING_DISKS[@]} -gt 0 ]; then
+            stage_disks=$(printf "%s, " "${OS_REBUILDING_DISKS[@]}")
+            stage_disks="${stage_disks%, }"
+        else
+            stage_disks="$rebuilding_list"
+        fi
+        echo -e "${YELLOW}${BOLD}STATUS: Stage 1/2 - Rebuilding OS mirrors (md0/md1) on ${stage_disks}${pct_info}.${NC}"
+    elif [ "$REBUILD_STAGE" == "2" ]; then
+        if [ ${#MD2_REBUILDING_DISKS[@]} -gt 0 ]; then
+            stage_disks=$(printf "%s, " "${MD2_REBUILDING_DISKS[@]}")
+            stage_disks="${stage_disks%, }"
+        else
+            stage_disks="$rebuilding_list"
+        fi
+        echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5 ($ARRAY_DEV) on ${stage_disks}${pct_info}.${NC}"
+    elif [ "$os_rebuilding" -eq 1 ]; then
         echo -e "${YELLOW}${BOLD}STATUS: Stage 1/2 - Rebuilding OS mirrors (md0/md1) on ${rebuilding_list}${pct_info}.${NC}"
     else
         echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5 ($ARRAY_DEV) on ${rebuilding_list}${pct_info}.${NC}"
