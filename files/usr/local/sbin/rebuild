@@ -181,6 +181,9 @@ step_fail() {
 }
 
 init_storage() {
+    if [ -t 1 ]; then
+        clear
+    fi
     echo -e "${RED}================================================================================${NC}"
     echo -e "${BOLD}      WARNING: COMPLETE RAID-5 & iSCSI VOLUME (/dev/md2) INITIALIZATION         ${NC}"
     echo -e "${RED}================================================================================${NC}"
