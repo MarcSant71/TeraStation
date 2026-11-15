@@ -20,7 +20,7 @@ CYAN='\033[1;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-POOL_NAME="storage"
+ARRAY_DEV="/dev/md2"
 
 # Auto-detect number of physical ATA ports on chassis (2, 4, 6 or 8 bays)
 TOTAL_BAYS=$(ls -d /sys/class/ata_port/ata* 2>/dev/null | wc -l)
@@ -58,7 +58,6 @@ echo -e "${CYAN}================================================================
 printf "%-7s %-10s %-6s %-20s %-16s %s\n" "BAY" "DISK" "SIZE" "MODEL" "SERIAL" "STATUS"
 echo -e "------------------------------------------------------------------------------"
 
-zfs_status_raw=$(/sbin/zpool status -L "$POOL_NAME" 2>/dev/null || true)
 mdstat_raw=$(cat /proc/mdstat 2>/dev/null || true)
 
 REBUILD_CANDIDATE_DEV=""
@@ -81,8 +80,10 @@ except Exception:
 
 b0 = re.search(r'^md0\s*:.*?(?=\n\s*\n|\Z)', mdstat, re.MULTILINE | re.DOTALL)
 b1 = re.search(r'^md1\s*:.*?(?=\n\s*\n|\Z)', mdstat, re.MULTILINE | re.DOTALL)
+b2 = re.search(r'^md2\s*:.*?(?=\n\s*\n|\Z)', mdstat, re.MULTILINE | re.DOTALL)
 m0 = re.search(r'(recovery|resync)\s*=\s*([0-9\.]+)%', b0.group(0)) if b0 else None
 m1 = re.search(r'(recovery|resync)\s*=\s*([0-9\.]+)%', b1.group(0)) if b1 else None
+m2 = re.search(r'(recovery|resync)\s*=\s*([0-9\.]+)%', b2.group(0)) if b2 else None
 
 if m0:
     pct0 = float(m0.group(2))
@@ -90,24 +91,13 @@ if m0:
 elif m1:
     pct1 = float(m1.group(2))
     print(f"{86.2 + (pct1 * 0.138):.1f}%")
-else:
-    try:
-        res = subprocess.run(['/sbin/zpool', 'status', '-L', 'storage'], capture_output=True, text=True)
-        if "resilver in progress" in res.stdout:
-            mz = re.search(r'([0-9\.]+)%\s*done', res.stdout)
-            if mz:
-                print(f"{mz.group(1)}%")
-        elif "scrub in progress" in res.stdout:
-            mz = re.search(r'([0-9\.]+)%\s*done', res.stdout)
-            if mz:
-                print(f"{float(mz.group(1)):.1f}%")
-    except Exception:
-        pass
+elif m2:
+    print(f"{float(m2.group(2)):.1f}%")
 EOF
 )
 
 if [ -z "$REBUILD_PCT" ]; then
-    for md in md0 md1; do
+    for md in md0 md1 md2; do
         if ls /sys/block/$md/md/dev-*/state 2>/dev/null | xargs grep -q "spare" 2>/dev/null; then
             REBUILD_PCT="syncing"
             break
@@ -135,35 +125,21 @@ for p in "${sorted_bays[@]}"; do
         is_failed=0
         is_rebuilding=0
 
-        # Check if this disk is actively rebuilding
-        for md in md0 md1; do
-            if [ -f "/sys/block/$md/md/dev-${dev_name}2/state" ]; then
-                if grep -q "spare" "/sys/block/$md/md/dev-${dev_name}2/state" 2>/dev/null; then
-                    is_rebuilding=1
-                fi
-            fi
-            if [ -f "/sys/block/$md/md/dev-${dev_name}3/state" ]; then
-                if grep -q "spare" "/sys/block/$md/md/dev-${dev_name}3/state" 2>/dev/null; then
+        # Check if this disk is actively rebuilding in md0, md1, or md2
+        for md_part in "md0:${dev_name}2" "md1:${dev_name}3" "md2:${dev_name}4"; do
+            md="${md_part%%:*}"
+            part="${md_part#*:}"
+            if [ -f "/sys/block/$md/md/dev-${part}/state" ]; then
+                if grep -q "spare" "/sys/block/$md/md/dev-${part}/state" 2>/dev/null; then
                     is_rebuilding=1
                 fi
             fi
         done
 
-        if echo "$zfs_status_raw" | grep -q "resilver in progress"; then
-            if echo "$zfs_status_raw" | grep -q "${dev_name}4"; then
-                if echo "$zfs_status_raw" | grep -E -q "(${dev_name}4.*resilver|replacing.*${dev_name}4)"; then
-                    is_rebuilding=1
-                fi
-            fi
-        fi
-
-        # Do not report REBUILD if ZFS vdev is faulted/unavail without active resilvering (unless rebuild script is running)
+        # Do not report REBUILD if md2 is dead/missing without active recovery (unless rebuild script is running)
         if [ ! -f "/run/terastation_rebuild_in_progress" ]; then
-            if grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE)" <<< "$zfs_status_raw" || \
-               ! grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+" <<< "$zfs_status_raw"; then
-                if ! grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+ONLINE.*\(resilvering\)" <<< "$zfs_status_raw"; then
-                    is_rebuilding=0
-                fi
+            if grep -q -E "\b${dev_name}4\[[0-9]+\]\(F\)" <<< "$mdstat_raw"; then
+                is_rebuilding=0
             fi
         fi
 
@@ -179,18 +155,14 @@ for p in "${sorted_bays[@]}"; do
             if [ ! -b "$dev_part1" ] || [ ! -b "$dev_part2" ] || [ ! -b "$dev_part3" ] || [ ! -b "$dev_part4" ]; then
                 status_text="${RED}FAILED${NC}"
                 is_failed=1
-            # 2. Check Debian RAID mirror health (md0 / md1)
-            elif ! echo "$mdstat_raw" | grep -q "${dev_name}2"; then
+            # 2. Check Debian RAID mirror health (md0 / md1) and RAID5 storage array (md2)
+            elif ! grep -q -E "(^|[[:space:]])${dev_name}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_raw"; then
                 status_text="${RED}FAILED${NC}"
                 is_failed=1
-            elif ! echo "$mdstat_raw" | grep -q "${dev_name}3"; then
+            elif ! grep -q -E "(^|[[:space:]])${dev_name}3\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_raw"; then
                 status_text="${RED}FAILED${NC}"
                 is_failed=1
-            # 3. Check ZFS health (vdev line must start with exact partition name)
-            elif echo "$zfs_status_raw" | grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE)"; then
-                status_text="${RED}FAILED${NC}"
-                is_failed=1
-            elif ! echo "$zfs_status_raw" | grep -E -q "^[[:space:]]+${dev_name}4[[:space:]]+"; then
+            elif ! grep -q -E "(^|[[:space:]])${dev_name}4\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_raw"; then
                 status_text="${RED}FAILED${NC}"
                 is_failed=1
             fi
@@ -209,10 +181,7 @@ for p in "${sorted_bays[@]}"; do
     else
         # Determine if this empty bay was part of an active array (real failure) or simply unpopulated
         is_missing_member=0
-        if echo "$mdstat_raw" | grep -q "\[_"; then
-            is_missing_member=1
-        fi
-        if grep -qiE "(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)" <<< "$zfs_status_raw"; then
+        if echo "$mdstat_raw" | grep -q "\[_" || [ ! -b "$ARRAY_DEV" ]; then
             is_missing_member=1
         fi
 
@@ -228,38 +197,49 @@ done
 
 echo -e "------------------------------------------------------------------------------"
 
-# ZFS Pool Capacity & Usage Summary
-if [ -n "$zfs_status_raw" ]; then
-    zfs_space=$(python3 - << EOF
-import subprocess
+# RAID-5 Array Capacity & Health Summary
+if [ -b "$ARRAY_DEV" ]; then
+    md2_summary=$(python3 - << EOF
+import os, subprocess
 try:
-    res_p = subprocess.run(['/sbin/zfs', 'list', '-Hp', '-o', 'used,avail', '$POOL_NAME'], capture_output=True, text=True)
-    res_h = subprocess.run(['/sbin/zfs', 'list', '-H', '-o', 'used,avail', '$POOL_NAME'], capture_output=True, text=True)
-    if res_p.returncode == 0 and res_h.returncode == 0:
-        u_b, a_b = [int(x) for x in res_p.stdout.strip().split()]
-        t_b = u_b + a_b
-        u_h, a_h = res_h.stdout.strip().split()
-        t_h = f"{t_b / (1024**4):.1f}T"
-        u_pct = f"{(u_b / t_b) * 100:.1f}%"
-        a_pct = f"{(a_b / t_b) * 100:.1f}%"
-        print(f"{t_h} {u_h} {u_pct} {a_h} {a_pct}")
+    b = int(subprocess.check_output(['/sbin/blockdev', '--getsize64', '$ARRAY_DEV'], text=True).strip())
+    t_h = f"{b / (1024**4):.1f}T"
+    raid_disks = int(open('/sys/block/md2/md/raid_disks').read().strip())
+    degraded = int(open('/sys/block/md2/md/degraded').read().strip())
+    action = open('/sys/block/md2/md/sync_action').read().strip()
+    state = open('/sys/block/md2/md/array_state').read().strip().upper()
+    active_disks = max(0, raid_disks - degraded)
+    if degraded > 0:
+        state_lbl = "DEGRADED"
+    elif action != "idle":
+        state_lbl = action.upper()
+    else:
+        state_lbl = state
+    bm_path = '/sys/block/md2/md/bitmap/location'
+    has_bm = os.path.exists(bm_path) and open(bm_path).read().strip() != 'none'
+    bm_lbl = "BITMAP: INTERNAL" if has_bm else "BITMAP: NONE"
+    print(f"{t_h} RAID5:{state_lbl}({active_disks}/{raid_disks}) {bm_lbl}")
 except Exception:
     pass
 EOF
 )
-    if [ -n "$zfs_space" ]; then
-        read -r t_size u_size u_pct a_size a_pct <<< "$zfs_space"
-        printf "%-7s %-10s %-6s %-20s %s\n" "POOL" "$POOL_NAME" "$t_size" "USED: $u_size ($u_pct)" "FREE: $a_size ($a_pct)"
+    if [ -n "$md2_summary" ]; then
+        read -r t_size arr_state bm_info <<< "$md2_summary"
+        printf "%-7s %-10s %-6s %-20s %s\n" "ARRAY" "$ARRAY_DEV" "$t_size" "$arr_state" "$bm_info"
         echo -e "------------------------------------------------------------------------------"
     fi
 fi
-zfs_dead=0
-if echo "$zfs_status_raw" | grep -q -E "state:\s*(FAULTED|UNAVAIL)"; then
-    zfs_dead=1
-fi
 
-if [ "$FAILED_COUNT" -ge 2 ] || [ "$zfs_dead" -eq 1 ]; then
-    echo -e "${RED}${BOLD}STATUS: Critical failure on 2+ disks. ZFS unrecoverable.${NC}"
+md2_dead=0
+if ! grep -q "^md2 :" <<< "$mdstat_raw" || grep -q "^md2 : inactive" <<< "$mdstat_raw"; then
+    md2_dead=1
+elif [ -f /sys/block/md2/md/degraded ] && [ "$(cat /sys/block/md2/md/degraded 2>/dev/null)" -ge 2 ]; then
+    md2_dead=1
+fi
+md2_action=$(cat /sys/block/md2/md/sync_action 2>/dev/null || true)
+
+if [ "$FAILED_COUNT" -ge 2 ] || [ "$md2_dead" -eq 1 ]; then
+    echo -e "${RED}${BOLD}STATUS: Critical failure on 2+ disks. RAID-5 ($ARRAY_DEV) unrecoverable.${NC}"
     echo -e "${RED}${BOLD}        After replacing disks, run: rebuild --init-storage${NC}"
 elif [ -n "$REBUILD_CANDIDATE_DEV" ]; then
     disk_num="${REBUILD_CANDIDATE_DISK#Bay }"
@@ -272,14 +252,14 @@ elif [ "$REBUILDING_COUNT" -gt 0 ]; then
         pct_info=" (${REBUILD_PCT})"
     fi
     echo -e "${YELLOW}${BOLD}STATUS: Rebuilding in progress on $REBUILDING_DISK${pct_info}.${NC}"
-elif echo "$zfs_status_raw" | grep -q "scrub in progress"; then
+elif [ "$md2_action" == "resync" ] || [ "$md2_action" == "check" ]; then
     pct_info=" (syncing)"
     if [ -n "$REBUILD_PCT" ]; then
         pct_info=" (${REBUILD_PCT})"
     fi
-    echo -e "${YELLOW}${BOLD}STATUS: Pool maintenance (scrub) in progress${pct_info}.${NC}"
+    echo -e "${YELLOW}${BOLD}STATUS: Array ${md2_action} in progress on $ARRAY_DEV${pct_info}.${NC}"
 else
-    echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized in ZFS and Debian.${NC}"
+    echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized across md0, md1, and md2.${NC}"
 fi
 echo -e "To replace a failed disk or view recovery options, run: ${GREEN}rebuild${NC}"
 echo -e "${CYAN}==============================================================================${NC}"

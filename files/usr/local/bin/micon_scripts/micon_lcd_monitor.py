@@ -12,7 +12,7 @@ Emulates authentic Buffalo TeraStation firmware front panel behavior:
    - Confirmation chime when recovering from Alert or Rebuilding.
 
 2. ORANGE / AMBER (REBUILDING / RESYNCING):
-   - Active rebuild/resilver in progress (ZFS resilver or MDADM recovery).
+   - Active MDADM recovery or parity resync in progress (md0, md1, or md2).
    - Backlight: Solid ORANGE (blinking stops).
    - Front LEDs: INFO=ON, ERROR=OFF.
    - Drive Tray LEDs: Rebuilding bay blinks Green; healthy bays remain Green Solid.
@@ -135,28 +135,57 @@ def get_ip_address():
         return "192.168.68.15"
 
 
-def _get_zpool_status(pool_name="storage"):
-    """
-    Runs zpool status with a hard non-blocking deadline so D-state ZFS locks
-    during `zpool replace` cannot freeze the LCD polling loop.
-    """
+def _read_mdstat():
+    """Returns /proc/mdstat contents or empty string on error."""
     try:
-        proc = subprocess.Popen(
-            ['/sbin/zpool', 'status', '-L', pool_name],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        deadline = time.time() + 3.0
-        while proc.poll() is None:
-            if time.time() >= deadline:
-                proc.kill()
-                return ""
-            time.sleep(0.05)
-        out, _ = proc.communicate(timeout=0.5)
-        return out if proc.returncode == 0 else ""
+        with open("/proc/mdstat", "r") as f:
+            return f.read()
     except Exception:
         return ""
+
+
+def _md_block(md_name, mdstat_content):
+    """Extracts the stanza for md_name from /proc/mdstat."""
+    if not mdstat_content:
+        return ""
+    m_blk = re.search(rf'(?ms)^{re.escape(md_name)}\s*:.*?(?=^\S|\Z)', mdstat_content)
+    return m_blk.group(0) if m_blk else ""
+
+
+def _is_md_member_healthy(dev_name, part_num, md_name, mdstat_content):
+    """Returns True if dev_name+part_num is an active non-faulty member of md_name."""
+    blk = _md_block(md_name, mdstat_content)
+    if not blk or "inactive" in blk:
+        return False
+    return re.search(rf'\b{re.escape(dev_name)}{part_num}\[\d+\](?!\(F\))', blk) is not None
+
+
+def _get_md_degraded_count(md_name):
+    """Returns sysfs degraded device count for md_name (0 if healthy, None if unavailable)."""
+    try:
+        with open(f"/sys/block/{md_name}/md/degraded", "r") as df:
+            return int(df.read().strip())
+    except Exception:
+        return None
+
+
+def _md_has_spare(md_name):
+    """Returns True if md_name currently has a spare device rebuilding in sysfs."""
+    md_dir = f"/sys/block/{md_name}/md"
+    if not os.path.exists(md_dir):
+        return False
+    for dev_entry in os.listdir(md_dir):
+        if not dev_entry.startswith("dev-"):
+            continue
+        st_file = os.path.join(md_dir, dev_entry, "state")
+        if os.path.exists(st_file):
+            try:
+                with open(st_file, "r") as sf:
+                    if "spare" in sf.read():
+                        return True
+            except Exception:
+                pass
+    return False
 
 
 def _read_md_sync(md_name, mdstat_content=None):
@@ -211,15 +240,14 @@ def _read_md_sync(md_name, mdstat_content=None):
         return "idle", None, is_degraded
 
 
-def _find_target_disk(zfs_stdout="", hint_disk=None):
+def _find_target_disk(hint_disk=None):
     """
-    Resolves the physical Disk Number (1-8) being rebuilt from authoritative kernel/ZFS sources:
-    1. mdadm sysfs 'spare' device state
-    2. ZFS '(resilvering)' or faulted/unavail vdev
-    3. Caller-supplied hint_disk (active rebuild script lock)
+    Resolves the physical Disk Number (1-8) being rebuilt from authoritative kernel sources:
+    1. mdadm sysfs 'spare' device state across md0, md1, md2
+    2. Caller-supplied hint_disk (active rebuild script lock)
     """
     target_disk = None
-    for md_name in ("md0", "md1"):
+    for md_name in ("md0", "md1", "md2"):
         md_dir = f"/sys/block/{md_name}/md"
         if not os.path.exists(md_dir):
             continue
@@ -249,48 +277,29 @@ def _find_target_disk(zfs_stdout="", hint_disk=None):
         if target_disk:
             return target_disk
 
-    if zfs_stdout:
-        for line in zfs_stdout.splitlines():
-            if "(resilvering)" in line:
-                parts = line.strip().split()
-                if parts and parts[0].startswith("sd"):
-                    d_num = get_disk_number(parts[0])
-                    if d_num:
-                        return d_num
-        for line in zfs_stdout.splitlines():
-            m_was = re.search(r"was\s+/dev/(sd[a-z]+[0-9]*)", line)
-            if m_was:
-                d_num = get_disk_number(m_was.group(1))
-                if d_num:
-                    return d_num
-            parts = line.strip().split()
-            if len(parts) >= 2 and parts[0].startswith("sd") and parts[1] in ("FAULTED", "DEGRADED", "UNAVAIL", "OFFLINE"):
-                d_num = get_disk_number(parts[0])
-                if d_num:
-                    return d_num
-
     return hint_disk
 
 
-def check_rebuild_progress(pool_name="storage", hint_disk=None, zfs_stdout=None):
+def check_rebuild_progress(pool_name="storage", hint_disk=None):
     """
-    Checks if MDADM or ZFS is actively rebuilding/resyncing.
+    Checks if MDADM (md0, md1, md2) is actively rebuilding/resyncing.
     Returns (is_rebuilding, title_line, detail_line)
     """
-    act0, pct0, deg0 = _read_md_sync("md0")
-    act1, pct1, deg1 = _read_md_sync("md1")
-    md_active = (pct0 is not None or pct1 is not None or act0 in ("recover", "resync") or act1 in ("recover", "resync"))
+    mdstat = _read_mdstat()
+    act0, pct0, deg0 = _read_md_sync("md0", mdstat)
+    act1, pct1, deg1 = _read_md_sync("md1", mdstat)
+    act2, pct2, deg2 = _read_md_sync("md2", mdstat)
 
-    # Resolve target disk from fast sysfs/hint_disk first; only query ZFS when needed
-    target_disk = _find_target_disk(zfs_stdout=(zfs_stdout or ""), hint_disk=hint_disk)
-    if not md_active or target_disk is None:
-        if zfs_stdout is None:
-            zfs_stdout = _get_zpool_status(pool_name)
-        if target_disk is None and zfs_stdout:
-            target_disk = _find_target_disk(zfs_stdout=zfs_stdout, hint_disk=hint_disk)
+    md_sys_active = (pct0 is not None or pct1 is not None or act0 in ("recover", "resync") or act1 in ("recover", "resync"))
+    md_data_active = (pct2 is not None or act2 in ("recover", "resync"))
 
-    # 1. Check MDADM resync / recovery via native sysfs counters
-    if md_active:
+    if not md_sys_active and not md_data_active:
+        return False, "", ""
+
+    target_disk = _find_target_disk(hint_disk=hint_disk)
+
+    # 1. Stage 1: Debian OS & Swap mirrors (md0 + md1)
+    if md_sys_active:
         # When a spare disk is queued waiting for a parity resync, report 0.0% for that array until recover begins
         p0 = pct0 if (pct0 is not None and not (act0 == "resync" and target_disk)) else (0.0 if deg0 else 100.0)
         p1 = pct1 if (pct1 is not None and not (act1 == "resync" and target_disk)) else (0.0 if deg1 else 100.0)
@@ -303,119 +312,57 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None, zfs_stdout=None)
         detail = f"PROGRESS: {val:<6}"
         return True, title[:16], detail[:16]
 
-    # 2. Check ZFS resilver or maintenance scrub
-    if "resilver in progress" in zfs_stdout and "(resilvering)" in zfs_stdout:
-        m = re.search(r'([0-9\.]+)%\s*done', zfs_stdout)
-        pct = f"{float(m.group(1)):.1f}%" if m else "IN PROG"
+    # 2. Stage 2: Storage RAID-5 array (md2)
+    if md_data_active:
+        val = f"{pct2:.1f}%" if pct2 is not None else f"{'QUEUED':<6}"
         title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: RAID  "
-        detail = f"PROGRESS: {pct:<6}"
+        detail = f"PROGRESS: {val:<6}"
         return True, title[:16], detail[:16]
-    if "scrub in progress" in zfs_stdout:
-        if "FAULTED" not in zfs_stdout and "UNAVAIL" not in zfs_stdout:
-            m = re.search(r'([0-9\.]+)%\s*done', zfs_stdout)
-            if m:
-                try:
-                    pct = f"{float(m.group(1)):.1f}%"
-                except ValueError:
-                    pct = f"{m.group(1)}%"
-            else:
-                pct = "IN PROG"
-            title = "   POOL SCRUB   "
-            detail = f"PROGRESS: {pct:<6}"
-            return True, title[:16], detail[:16]
 
     return False, "", ""
 
 
-def check_zfs_health(pool_name="storage", zfs_stdout=None):
-    """
-    Returns (is_healthy, status_summary, error_detail) in English.
-    """
-    try:
-        if zfs_stdout is None:
-            zfs_stdout = _get_zpool_status(pool_name)
-        if not zfs_stdout:
-            return False, "POOL UNAVAIL", "CMD FAILED"
-
-        lines = zfs_stdout.splitlines()
-        state = "UNKNOWN"
-        faulted_disks = []
-
-        for line in lines:
-            line_str = line.strip()
-            if line_str.startswith("state:"):
-                state = line_str.split(":", 1)[1].strip()
-
-            parts = line_str.split()
-            if len(parts) >= 5 and parts[0].startswith("sd"):
-                d_name = parts[0]
-                d_state = parts[1]
-                read_err = parts[2]
-                write_err = parts[3]
-                cksum_err = parts[4]
-
-                # Only mark disk as faulted if device state is not ONLINE, or uncorrectable R/W errors exceed threshold
-                r_err = int(read_err) if read_err.isdigit() else 0
-                w_err = int(write_err) if write_err.isdigit() else 0
-                if d_state != "ONLINE" or r_err > 20 or w_err > 20:
-                    faulted_disks.append(d_name)
-
-        is_healthy = (state == "ONLINE" and len(faulted_disks) == 0)
-
-        if is_healthy:
-            return True, "ONLINE", ""
-        else:
-            if faulted_disks:
-                nums = list(dict.fromkeys(str(get_disk_number(d)) for d in faulted_disks if get_disk_number(d)))
-                if not nums:
-                    nums = [str(dn) for dn, pid, _ in BAYS if not os.path.islink(f"/dev/disk/by-path/{pid}")]
-                if nums:
-                    return False, state, f"FAIL: DISK {','.join(nums)}"[:16]
-            return False, state, f"STATE: {state}"[:16]
-
-    except Exception as e:
-        return False, "ERROR", f"ERR: {str(e)[:11]}"
-
-
 def check_mdstat_health():
     """
-    Checks /proc/mdstat for degraded arrays.
+    Checks md0, md1, and md2 health via /proc/mdstat and sysfs.
     Returns (is_healthy, error_detail)
     """
     try:
-        # If any partition is actively rebuilding (spare state in sysfs), do not report degraded alert
-        for md_name in ["md0", "md1"]:
-            md_dir = f"/sys/block/{md_name}/md"
-            if os.path.exists(md_dir):
-                for dev_entry in os.listdir(md_dir):
-                    if dev_entry.startswith("dev-"):
-                        st_file = os.path.join(md_dir, dev_entry, "state")
-                        if os.path.exists(st_file):
-                            with open(st_file, "r") as sf:
-                                if "spare" in sf.read():
-                                    return True, ""
+        content = _read_mdstat()
+        if not content:
+            return False, "FAIL: NO MDSTAT"
 
-        with open("/proc/mdstat", "r") as f:
-            content = f.read()
+        arrays = [("md0", 2, False), ("md1", 3, False), ("md2", 4, True)]
+        for md_name, part_num, is_raid5 in arrays:
+            blk = _md_block(md_name, content)
+            if not blk or "inactive" in blk:
+                return False, f"FAIL: {md_name.upper()} DEAD"[:16]
 
-        is_degraded = False
-        for line in content.splitlines():
-            if "_" in line and ("U" in line or "blocks" in line):
-                is_degraded = True
-                break
+            deg = _get_md_degraded_count(md_name)
+            has_spare = _md_has_spare(md_name)
+            is_degraded = (deg is not None and deg > 0) or ("[_" in blk)
 
-        if not is_degraded:
-            return True, ""
+            # RAID5 md2 with 2+ failed drives is unrecoverable even if a spare is attached
+            if is_raid5 and deg is not None and deg >= 2:
+                return False, "FAIL: 2+ DISKS"[:16]
 
-        for d in ["sda", "sdb", "sdc", "sdd", "sde", "sdf", "sdg", "sdh"]:
-            if f"{d}2" not in content:
-                d_num = get_disk_number(d)
-                if d_num:
-                    return False, f"FAIL: DISK {d_num}"[:16]
+            if is_degraded and not has_spare:
+                faulted = []
+                for disk_num, p_id, _ in BAYS:
+                    link_path = f"/dev/disk/by-path/{p_id}"
+                    if not os.path.islink(link_path):
+                        faulted.append(str(disk_num))
+                        continue
+                    dev_name = os.path.basename(os.path.realpath(link_path))
+                    if not _is_md_member_healthy(dev_name, part_num, md_name, content):
+                        faulted.append(str(disk_num))
+                if faulted:
+                    return False, f"FAIL: DISK {','.join(faulted)}"[:16]
+                return False, f"FAIL: {md_name.upper()} DEG"[:16]
 
-        return False, "FAIL: MD DEGRADED"
-    except Exception:
         return True, ""
+    except Exception as e:
+        return False, f"ERR: {str(e)[:11]}"
 
 
 def compute_sata_led_masks(pool_name="storage"):
@@ -440,20 +387,14 @@ def compute_sata_led_masks(pool_name="storage"):
     except Exception:
         pass
 
-    zfs_raw = "" if rebuild_flag_disk is not None else _get_zpool_status(pool_name)
-
-    md_raw = ""
-    try:
-        with open("/proc/mdstat", "r") as f:
-            md_raw = f.read()
-    except Exception:
-        pass
+    md_raw = _read_mdstat()
+    md2_blk = _md_block("md2", md_raw)
 
     for disk_num, p_id, bit in BAYS:
         link_path = f"/dev/disk/by-path/{p_id}"
         if not os.path.islink(link_path):
-            # Physical bay is empty: only blink RED LED if an active array is degraded
-            is_degraded = ("[_" in md_raw) or any(x in zfs_raw for x in ["FAULTED", "DEGRADED", "UNAVAIL", "OFFLINE", "REMOVED"])
+            # Physical bay is empty: only blink RED LED if any array is degraded or md2 is down
+            is_degraded = ("[_" in md_raw) or (not md2_blk) or ("inactive" in md2_blk)
             if is_degraded:
                 red_on |= (1 << bit)
                 red_blink |= (1 << bit)
@@ -466,28 +407,20 @@ def compute_sata_led_masks(pool_name="storage"):
         # 1. MDADM sysfs rebuild check (or active rebuild flag)
         if rebuild_flag_disk is not None and disk_num == rebuild_flag_disk:
             is_rebuilding = True
-        for md in ["md0", "md1"]:
-            for part in [f"{dev_name}2", f"{dev_name}3"]:
-                st_file = f"/sys/block/{md}/md/dev-{part}/state"
-                try:
-                    with open(st_file, "r") as sf:
-                        if "spare" in sf.read():
-                            is_rebuilding = True
-                except Exception:
-                    pass
+        for md, part in (("md0", f"{dev_name}2"), ("md1", f"{dev_name}3"), ("md2", f"{dev_name}4")):
+            st_file = f"/sys/block/{md}/md/dev-{part}/state"
+            try:
+                with open(st_file, "r") as sf:
+                    if "spare" in sf.read():
+                        is_rebuilding = True
+            except Exception:
+                pass
 
-        # 2. ZFS rebuild check (resilvering or replacing) - match only this bay's device line
-        if zfs_raw and "resilver in progress" in zfs_raw:
-            for z_line in zfs_raw.splitlines():
-                if re.search(rf'\b{re.escape(dev_name)}4\b', z_line) and ("(resilvering)" in z_line or "resilver" in z_line):
-                    is_rebuilding = True
-                    break
-
-        # 3. MDADM / ZFS failure check (only if not actively rebuilding)
+        # 2. MDADM membership & fault check (only if not actively rebuilding)
         if not is_rebuilding:
-            if (f"{dev_name}2" not in md_raw) or (f"{dev_name}3" not in md_raw):
-                is_failed = True
-            if zfs_raw and (f"{dev_name}4" not in zfs_raw or f"{dev_name}4  FAULTED" in zfs_raw or f"{dev_name}4  UNAVAIL" in zfs_raw):
+            if not _is_md_member_healthy(dev_name, 2, "md0", md_raw) or \
+               not _is_md_member_healthy(dev_name, 3, "md1", md_raw) or \
+               not _is_md_member_healthy(dev_name, 4, "md2", md_raw):
                 is_failed = True
 
         if is_rebuilding:
@@ -507,7 +440,7 @@ def determine_storage_state(pool_name="storage"):
     Determines overall storage state:
     Returns (state_id, title_str, detail_str)
     """
-    # 1. Check for missing / pulled disks first (even during rebuild/scrub)
+    # 1. Check for missing / pulled disks first (even during rebuild)
     missing_disks = []
     for disk_num, p_id, _ in BAYS:
         link_path = f"/dev/disk/by-path/{p_id}"
@@ -516,7 +449,7 @@ def determine_storage_state(pool_name="storage"):
     if missing_disks:
         return STATE_ALERT, "** RAID ALERT **", f"FAIL: DISK {','.join(missing_disks)}"[:16]
 
-    # 1b. If 'rebuild' script is actively executing Steps [1/5]..[5/5], pass hint_disk directly
+    # 2. If 'rebuild' script is actively executing Steps [1/5]..[5/5], pass hint_disk directly
     rebuild_flag = "/run/terastation_rebuild_in_progress"
     hint_disk = None
     if os.path.exists(rebuild_flag):
@@ -533,23 +466,15 @@ def determine_storage_state(pool_name="storage"):
         t_str = f"REBUILD1: DISK {hint_disk}" if hint_disk else "REBUILD1: RAID  "
         return STATE_REBUILDING, t_str[:16], "PROGRESS: 0.0%  "
 
-    # 2. Check for ZFS faults when no ZFS resilver is actively running
-    zfs_stdout = _get_zpool_status(pool_name)
-    zfs_ok, zfs_status, zfs_detail = check_zfs_health(pool_name, zfs_stdout=zfs_stdout)
-    if not zfs_ok:
-        zfs_resilvering = ("resilver in progress" in zfs_stdout and "(resilvering)" in zfs_stdout)
-        if not zfs_resilvering:
-            return STATE_ALERT, "** RAID ALERT **", zfs_detail if zfs_detail else f"STATE: {zfs_status}"
-
-    # 3. Check if an active rebuild or maintenance scrub is in progress
-    is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name, zfs_stdout=zfs_stdout)
-    if is_rebuilding:
-        return STATE_REBUILDING, rebuild_title, rebuild_detail
-
-    # 4. Check for faults in MDADM (Debian OS mirror)
+    # 3. Check for degraded/dead arrays without an active rebuild
     md_ok, md_detail = check_mdstat_health()
     if not md_ok:
         return STATE_ALERT, "** RAID ALERT **", md_detail
+
+    # 4. Check if an active rebuild or parity resync is in progress
+    is_rebuilding, rebuild_title, rebuild_detail = check_rebuild_progress(pool_name)
+    if is_rebuilding:
+        return STATE_REBUILDING, rebuild_title, rebuild_detail
 
     # 5. Perfectly healthy
     return STATE_HEALTHY, "", "ONLINE"

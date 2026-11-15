@@ -1,6 +1,6 @@
 [Unit]
-Description=Terastation LCD Status and ZFS Health Monitor
-After=micon_boot.service zfs-mount.service
+Description=Terastation LCD Status and RAID Health Monitor
+After=micon_boot.service local-fs.target
 Wants=micon_boot.service
 
 [Service]

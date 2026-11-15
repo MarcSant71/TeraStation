@@ -34,27 +34,27 @@
         "emulate_pr": 1,
         "emulate_rest_reord": 0,
         "emulate_tas": 1,
-        "emulate_tpu": 1,
-        "emulate_tpws": 1,
+        "emulate_tpu": 0,
+        "emulate_tpws": 0,
         "emulate_ua_intlck_ctrl": 0,
         "emulate_write_cache": 0,
         "enforce_pr_isids": 1,
         "force_pr_aptpl": 0,
-        "is_nonrot": 1,
-        "max_unmap_block_desc_count": 16,
-        "max_unmap_lba_count": 2097152,
+        "is_nonrot": 0,
+        "max_unmap_block_desc_count": 0,
+        "max_unmap_lba_count": 0,
         "max_write_same_len": 65535,
-        "optimal_sectors": 32768,
+        "optimal_sectors": 2048,
         "pgr_support": 1,
         "pi_prot_format": 0,
         "pi_prot_type": 0,
         "pi_prot_verify": 0,
         "queue_depth": 128,
-        "unmap_granularity": 1,
+        "unmap_granularity": 0,
         "unmap_granularity_alignment": 0,
-        "unmap_zeroes_data": 1
+        "unmap_zeroes_data": 0
       },
-      "dev": "/dev/zvol/storage/lun0",
+      "dev": "/dev/md2",
       "name": "lun0",
       "plugin": "block",
       "readonly": false,
@@ -72,11 +72,11 @@
         {
           "attributes": {
             "authentication": 0,
-            "cache_dynamic_acls": 1,
+            "cache_dynamic_acls": 0,
             "default_cmdsn_depth": 64,
             "default_erl": 0,
             "demo_mode_discovery": 1,
-            "demo_mode_write_protect": 0,
+            "demo_mode_write_protect": 1,
             "fabric_prot_type": 0,
             "generate_node_acls": 0,
             "login_keys_workaround": 1,
@@ -89,7 +89,7 @@
           "enable": true,
           "luns": [
             {
-              "alias": "9fb296f06b",
+              "alias": "93558749a6",
               "alua_tg_pt_gp_name": "default_tg_pt_gp",
               "index": 0,
               "storage_object": "/backstores/block/lun0"
@@ -110,7 +110,7 @@
               },
               "mapped_luns": [
                 {
-                  "alias": "6e79160ee8",
+                  "alias": "879f1ca0fc",
                   "index": 0,
                   "tpg_lun": 0,
                   "write_protect": false

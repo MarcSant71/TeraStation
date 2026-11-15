@@ -1,0 +1,2 @@
+# Increase RAID5 stripe cache for higher sustained sequential write throughput on /dev/md2 (~64 MiB)
+ACTION=="add|change", KERNEL=="md2", ATTR{md/stripe_cache_size}="2048"

@@ -4,7 +4,7 @@
 # Designed for safe, assisted operations in hardware failure scenarios
 # Supports:
 #   - rebuild <device>         : Replaces and rebuilds 1 failed disk
-#   - rebuild --init-storage   : Disaster recovery (recreates 18 TB ZFS from scratch)
+#   - rebuild --init-storage   : Disaster recovery (recreates RAID-5 /dev/md2 from scratch)
 #
 # For read-only health diagnostics and disk mapping, run: status
 # ==============================================================================
@@ -25,7 +25,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exec sudo "$0" "$@"
 fi
 
-POOL_NAME="storage"
+ARRAY_DEV="/dev/md2"
 
 # Auto-detect number of physical ATA ports on chassis (2, 4, 6 or 8 bays)
 TOTAL_BAYS=$(ls -d /sys/class/ata_port/ata* 2>/dev/null | wc -l)
@@ -80,16 +80,14 @@ wipe_and_clone_gpt() {
 
     for part in "${target_dev}"[0-9]*; do
         if [ -b "$part" ]; then
-            mdadm --manage /dev/md0 --fail "$part" >/dev/null 2>&1 || true
-            mdadm --manage /dev/md0 --remove "$part" >/dev/null 2>&1 || true
-            mdadm --manage /dev/md1 --fail "$part" >/dev/null 2>&1 || true
-            mdadm --manage /dev/md1 --remove "$part" >/dev/null 2>&1 || true
-            zpool labelclear -f "$part" >/dev/null 2>&1 || true
+            for md_dev in /dev/md0 /dev/md1 /dev/md2; do
+                mdadm --manage "$md_dev" --fail "$part" >/dev/null 2>&1 || true
+                mdadm --manage "$md_dev" --remove "$part" >/dev/null 2>&1 || true
+            done
             mdadm --zero-superblock "$part" >/dev/null 2>&1 || true
             wipefs -a "$part" >/dev/null 2>&1 || true
         fi
     done
-    zpool labelclear -f "$target_dev" >/dev/null 2>&1 || true
     mdadm --zero-superblock "$target_dev" >/dev/null 2>&1 || true
     wipefs -a "$target_dev" >/dev/null 2>&1 || true
     sgdisk --zap-all "$target_dev" >/dev/null 2>&1 || true
@@ -104,63 +102,31 @@ wipe_and_clone_gpt() {
         return 1
     fi
 
-    # Clear any stale RAID/ZFS superblocks aligned with the newly created partitions
+    # Clear any stale RAID superblocks aligned with the newly created partitions
     for pnum in 2 3 4; do
-        zpool labelclear -f "${target_dev}${pnum}" >/dev/null 2>&1 || true
         mdadm --zero-superblock "${target_dev}${pnum}" >/dev/null 2>&1 || true
         wipefs -a "${target_dev}${pnum}" >/dev/null 2>&1 || true
     done
     return 0
 }
 
-resolve_zfs_part_dev() {
-    local disk_dev="$1"
-    local part_dev="${disk_dev}4"
-    local part_real
-    part_real=$(readlink -f "$part_dev" 2>/dev/null || true)
-
-    if [ -n "$part_real" ]; then
-        local id_link
-        # Prefer stable ATA/SCSI hardware symlinks over volatile /dev/sdX4 names (skip wwn- aliases)
-        for id_link in /dev/disk/by-id/*-part4; do
-            [ -L "$id_link" ] || continue
-            case "$(basename "$id_link")" in
-                wwn-*) continue ;;
-            esac
-            if [ "$(readlink -f "$id_link" 2>/dev/null)" = "$part_real" ]; then
-                echo "$id_link"
-                return 0
-            fi
-        done
-        for id_link in /dev/disk/by-id/*-part4; do
-            [ -L "$id_link" ] || continue
-            if [ "$(readlink -f "$id_link" 2>/dev/null)" = "$part_real" ]; then
-                echo "$id_link"
-                return 0
-            fi
-        done
-    fi
-
-    echo "$part_dev"
-}
-
 init_storage() {
     echo -e "${RED}================================================================================${NC}"
-    echo -e "${BOLD}       WARNING: COMPLETE ZFS POOL & iSCSI VOLUME (18 TB) INITIALIZATION         ${NC}"
+    echo -e "${BOLD}      WARNING: COMPLETE RAID-5 & iSCSI VOLUME (/dev/md2) INITIALIZATION         ${NC}"
     echo -e "${RED}================================================================================${NC}"
     echo -e "This procedure is intended for ${BOLD}DISASTER RECOVERY${NC} (loss of 2+ disks),"
-    echo -e "where the ZFS pool was lost and replacement disks have been inserted."
+    echo -e "where RAID-5 (/dev/md2) was lost and replacement disks have been inserted."
     echo ""
     echo -e "${YELLOW}WHAT THIS PROCEDURE WILL DO:${NC}"
     echo -e "  1. Verify physical presence of all 8 disks in the slots."
     echo -e "  2. Partition new/raw disks and align GPT partitions."
     echo -e "  3. Synchronize Debian RAID (md0 and md1) across all 8 disks."
     echo -e "  4. Install GRUB bootloader on all 8 disks."
-    echo -e "  5. Recreate ZFS pool '$POOL_NAME' in RAID-Z1 (ashift=12) with all 8 disks."
-    echo -e "  6. Recreate iSCSI volume '$POOL_NAME/lun0' (18 TB, 64K, sync=disabled)."
+    echo -e "  5. Recreate RAID-5 storage array '$ARRAY_DEV' (8 disks, bitmap=internal)."
+    echo -e "  6. Update /etc/mdadm/mdadm.conf and initramfs."
     echo -e "  7. Restart kernel iSCSI target service (LIO)."
     echo -e "${RED}--------------------------------------------------------------------------------${NC}"
-    echo -e "${RED}${BOLD}DANGER:${NC} All data on the ZFS pool will be ${BOLD}ERASED${NC} and the volume recreated empty."
+    echo -e "${RED}${BOLD}DANGER:${NC} All data on $ARRAY_DEV will be ${BOLD}ERASED${NC} and recreated empty."
     echo -e "To confirm, type ${BOLD}INITIALIZE${NC} (in uppercase):"
     read -p "Confirmation: " CONFIRM_INIT
 
@@ -171,8 +137,7 @@ init_storage() {
 
     echo ""
     echo -e "${CYAN}[1/5] Verifying physical presence of all 8 disks...${NC}"
-    local zfs_devs_raw=()
-    local zfs_vdevs=()
+    local md2_parts=()
     local missing_disks=()
     local donor_disk=""
     local mdstat_init
@@ -186,7 +151,7 @@ init_storage() {
         else
             local dev_name
             dev_name=$(basename "$(readlink -f "$link_path")")
-            zfs_devs_raw+=("/dev/$dev_name")
+            md2_parts+=("/dev/${dev_name}4")
             if [ -z "$donor_disk" ] && [ -b "/dev/${dev_name}1" ] && [ -b "/dev/${dev_name}2" ] && [ -b "/dev/${dev_name}3" ] && [ -b "/dev/${dev_name}4" ]; then
                 if [ -z "$mdstat_init" ] || grep -q -E "(^|[[:space:]])${dev_name}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_init"; then
                     donor_disk="/dev/$dev_name"
@@ -241,58 +206,49 @@ init_storage() {
     fi
     echo -e "${GREEN}  -> [OK] Debian Operating System mirror and GRUB bootloader verified on all disks.${NC}"
 
-    echo -e "\n${CYAN}[3/5] Recreating ZFS pool '$POOL_NAME' in RAID-Z1...${NC}"
+    echo -e "\n${CYAN}[3/5] Stopping iSCSI target and wiping partition 4 RAID metadata...${NC}"
     systemctl stop rtslib-fb-targetctl 2>/dev/null || true
-    zpool destroy -f "$POOL_NAME" 2>/dev/null || true
+    mdadm --stop "$ARRAY_DEV" >/dev/null 2>&1 || true
     udevadm settle
-    local raw_dev vdev vdev_path
-    for raw_dev in "${zfs_devs_raw[@]}"; do
-        vdev=$(resolve_zfs_part_dev "$raw_dev")
-        [[ "$vdev" == /dev/* ]] && vdev_path="$vdev" || vdev_path="/dev/$vdev"
-        zpool labelclear -f "$vdev_path" >/dev/null 2>&1 || true
-        wipefs -a "$vdev_path" >/dev/null 2>&1 || true
-        zfs_vdevs+=("$vdev")
+    local part4
+    for part4 in "${md2_parts[@]}"; do
+        mdadm --zero-superblock "$part4" >/dev/null 2>&1 || true
+        wipefs -a "$part4" >/dev/null 2>&1 || true
     done
-    if ! zpool create -f -o ashift=12 -O compression=lz4 -O atime=off -O xattr=sa "$POOL_NAME" raidz1 "${zfs_vdevs[@]}"; then
-        echo -e "${RED}[CRITICAL ERROR] Failed to create ZFS pool '$POOL_NAME'!${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}  -> [OK] ZFS pool '$POOL_NAME' recreated successfully.${NC}"
+    echo -e "${GREEN}  -> [OK] Storage array stopped and partition 4 metadata cleared.${NC}"
 
-    local avail_bytes vol_size="18T"
-    avail_bytes=$(zfs get -Hp -o value available "$POOL_NAME" 2>/dev/null || true)
-    if [[ "$avail_bytes" =~ ^[0-9]+$ ]] && [ "$avail_bytes" -gt 0 ]; then
-        vol_size=$(python3 -c 'import sys; b=int(sys.argv[1]); print(f"{max(1, round(b / (1024**4)))}T")' "$avail_bytes")
-    fi
-
-    echo -e "\n${CYAN}[4/5] Creating ${vol_size} iSCSI volume (64K, sync=disabled)...${NC}"
-    if ! zfs create -s -V "$vol_size" -b 64K -o sync=disabled -o compression=lz4 "$POOL_NAME/lun0"; then
-        echo -e "${RED}[CRITICAL ERROR] Failed to create ZFS volume '$POOL_NAME/lun0'!${NC}"
+    echo -e "\n${CYAN}[4/5] Recreating RAID-5 array '$ARRAY_DEV' (8 disks, bitmap=internal)...${NC}"
+    if ! mdadm --create "$ARRAY_DEV" --run --level=5 --raid-devices="${#md2_parts[@]}" --chunk=512K --bitmap=internal --metadata=1.2 "${md2_parts[@]}"; then
+        echo -e "${RED}[CRITICAL ERROR] Failed to create RAID-5 array '$ARRAY_DEV'!${NC}"
         exit 1
     fi
     udevadm settle
     sleep 2
-    if [ ! -b "/dev/zvol/$POOL_NAME/lun0" ]; then
-        echo -e "${RED}[CRITICAL ERROR] Volume block device /dev/zvol/$POOL_NAME/lun0 did not appear!${NC}"
+    if [ ! -b "$ARRAY_DEV" ]; then
+        echo -e "${RED}[CRITICAL ERROR] Array block device $ARRAY_DEV did not appear!${NC}"
         exit 1
     fi
-    echo -e "${GREEN}  -> [OK] Volume '$POOL_NAME/lun0' created successfully.${NC}"
+    echo 2048 > /sys/block/md2/md/stripe_cache_size 2>/dev/null || true
+    sed -i '/^ARRAY[[:space:]]\+\/dev\/md\/\?2/d' /etc/mdadm/mdadm.conf
+    mdadm --detail --scan "$ARRAY_DEV" >> /etc/mdadm/mdadm.conf
+    update-initramfs -u >/dev/null 2>&1 || true
+    echo -e "${GREEN}  -> [OK] RAID-5 array '$ARRAY_DEV' created and mdadm.conf updated.${NC}"
 
     echo -e "\n${CYAN}[5/5] Reactivating iSCSI storage target service (LIO)...${NC}"
     if ! systemctl restart rtslib-fb-targetctl; then
         echo -e "${RED}[CRITICAL ERROR] Failed to restart rtslib-fb-targetctl!${NC}"
         exit 1
     fi
-    echo -e "${GREEN}  -> [OK] iSCSI target online and pointing to the new volume.${NC}"
+    echo -e "${GREEN}  -> [OK] iSCSI target online and pointing to $ARRAY_DEV.${NC}"
 
     echo -e "\n${CYAN}================================================================================${NC}"
-    echo -e "${GREEN}${BOLD}     STORAGE INITIALIZED SUCCESSFULLY! NEW 18 TB VOLUME READY                   ${NC}"
-    echo -e "${CYAN}==============================================================================${NC}"
+    echo -e "${GREEN}${BOLD}     STORAGE INITIALIZED SUCCESSFULLY! NEW RAID-5 VOLUME READY                 ${NC}"
+    echo -e "${CYAN}================================================================================${NC}"
     echo -e "Next steps on Windows:"
     echo -e "  1. Open Disk Management (diskmgmt.msc)."
     echo -e "  2. Initialize disk in GPT and format as quick NTFS (Drive G:)."
     echo -e "  3. Run your restore script: Restore_PC.cmd."
-    echo -e "${CYAN}==============================================================================${NC}"
+    echo -e "${CYAN}================================================================================${NC}"
     exit 0
 }
 
@@ -310,7 +266,6 @@ fi
 AUTO_FAILED_DEV=""
 AUTO_FAILED_DISK=""
 mdstat_now=$(cat /proc/mdstat 2>/dev/null)
-zfs_now=$(/sbin/zpool status -L "$POOL_NAME" 2>/dev/null)
 
 for p in "${sorted_bays[@]}"; do
     d_label="${DISK_MAP[$p]}"
@@ -325,13 +280,7 @@ for p in "${sorted_bays[@]}"; do
             d_failed=1
         elif ! grep -q -E "(^|[[:space:]])${d_name}3\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_now"; then
             d_failed=1
-        elif grep -q -E "^[[:space:]]+${d_name}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)" <<< "$zfs_now"; then
-            d_failed=1
-        elif grep -q -E "was .*/${d_name}4(/old)?([[:space:]]|$)" <<< "$zfs_now"; then
-            d_failed=1
-        elif grep -q -E "^[[:space:]]+${d_name}4[[:space:]]+ONLINE.*\(resilvering\)" <<< "$zfs_now"; then
-            d_failed=1
-        elif ! grep -q -E "^[[:space:]]+${d_name}4[[:space:]]" <<< "$zfs_now"; then
+        elif ! grep -q -E "(^|[[:space:]])${d_name}4\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_now"; then
             d_failed=1
         fi
         if [ "$d_failed" -eq 1 ] && [ -z "$AUTO_FAILED_DEV" ]; then
@@ -354,7 +303,7 @@ if [ $# -eq 0 ]; then
         echo -e "  ${BOLD}rebuild${NC}                  Auto-detect and rebuild the failed disk"
         echo -e "  ${BOLD}rebuild <1-8>${NC}            Rebuild by physical bay number (e.g. ${GREEN}rebuild 1${NC})"
         echo -e "  ${BOLD}rebuild <device>${NC}         Rebuild by device name (e.g. ${GREEN}rebuild /dev/sdb${NC})"
-        echo -e "  ${BOLD}rebuild --init-storage${NC}   Disaster recovery (recreates 18 TB ZFS pool and iSCSI target)"
+        echo -e "  ${BOLD}rebuild --init-storage${NC}   Disaster recovery (recreates RAID-5 /dev/md2 and iSCSI target)"
         echo -e ""
         echo -e "To view current disk map and health diagnostics, run: ${GREEN}${BOLD}status${NC}"
         echo -e "${CYAN}==============================================================================${NC}"
@@ -409,18 +358,19 @@ TARGET_SERIAL=$(lsblk -d -n -o SERIAL "$TARGET_DEV" 2>/dev/null || echo "N/A")
 
 # Safeguard: refuse to wipe a disk that is already rebuilding or 100% healthy in all arrays
 mdstat_check=$(cat /proc/mdstat 2>/dev/null || true)
-zfs_check=$(/sbin/zpool status -L "$POOL_NAME" 2>/dev/null || true)
-if grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+ONLINE.*\(resilvering\)" <<< "$zfs_check"; then
-    echo -e "\n${YELLOW}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is currently REBUILDING (ZFS resilvering in progress).${NC}"
-    echo -e "Refusing to wipe an active rebuild. Run ${BOLD}status${NC} to monitor progress."
-    exit 1
-fi
+for md_part in "md0:${CLEAN_DEV}2" "md1:${CLEAN_DEV}3" "md2:${CLEAN_DEV}4"; do
+    md_arr="${md_part%%:*}"
+    part_dev="${md_part#*:}"
+    if grep -q "spare" "/sys/block/$md_arr/md/dev-${part_dev}/state" 2>/dev/null; then
+        echo -e "\n${YELLOW}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is currently REBUILDING (${md_arr} recovery in progress).${NC}"
+        echo -e "Refusing to wipe an active rebuild. Run ${BOLD}status${NC} to monitor progress."
+        exit 1
+    fi
+done
 if grep -q -E "(^|[[:space:]])${CLEAN_DEV}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_check" && \
    grep -q -E "(^|[[:space:]])${CLEAN_DEV}3\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_check" && \
-   grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+ONLINE([[:space:]]+[0-9]+){3}[[:space:]]*$" <<< "$zfs_check" && \
-   ! grep -q -E "^[[:space:]]+${CLEAN_DEV}4[[:space:]]+(FAULTED|DEGRADED|UNAVAIL|OFFLINE|REMOVED)" <<< "$zfs_check" && \
-   ! grep -q -E "was .*/${CLEAN_DEV}4(/old)?([[:space:]]|$)" <<< "$zfs_check"; then
-    echo -e "\n${GREEN}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is already 100% ONLINE and synchronized in md0, md1, and ZFS.${NC}"
+   grep -q -E "(^|[[:space:]])${CLEAN_DEV}4\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_check"; then
+    echo -e "\n${GREEN}[SAFEGUARD] $TARGET_DISK ($TARGET_DEV) is already 100% ONLINE and synchronized in md0, md1, and md2.${NC}"
     echo -e "Refusing to wipe a healthy disk. Run ${BOLD}status${NC} to identify the actual failed bay."
     exit 1
 fi
@@ -566,82 +516,17 @@ grub-install "$TARGET_DEV" >/dev/null 2>&1 || step_fail "grub-install failed on 
 step_ok
 
 # ------------------------------------------------------------------------------
-# Step 5: Replace partition in ZFS pool and trigger Resilver
+# Step 5: Re-add Data partition to RAID-5 md2 and trigger Recovery
 # ------------------------------------------------------------------------------
-OLD_TARGET=$(python3 - << EOF
-import os, subprocess, sys
-
-pool_name = "$POOL_NAME"
-clean_dev = "$CLEAN_DEV"
-target_part = f"{clean_dev}4"
-
-# Map all other physically present bays so hot-swap letter shifts (e.g. sdg -> sdi) are detected
-bay_paths = [
-    "pci-0000:00:1f.2-ata-1", "pci-0000:00:1f.2-ata-2",
-    "pci-0000:00:1f.2-ata-3", "pci-0000:00:1f.2-ata-4",
-    "pci-0000:00:1f.2-ata-5", "pci-0000:00:1f.2-ata-6",
-    "pci-0000:01:00.0-ata-1", "pci-0000:01:00.0-ata-2",
-]
-other_bay_parts = set()
-for p in bay_paths:
-    lp = f"/dev/disk/by-path/{p}"
-    if os.path.islink(lp):
-        dev = os.path.basename(os.path.realpath(lp))
-        if dev != clean_dev:
-            other_bay_parts.add(f"{dev}4")
-
-res = subprocess.run(['/sbin/zpool', 'status', '-L', pool_name], capture_output=True, text=True)
-lines = res.stdout.splitlines()
-
-# Collect optional by-id aliases for clean_dev partition 4 (if pool was imported by-id)
-id_aliases = {f'/dev/{target_part}', target_part}
-by_id_dir = '/dev/disk/by-id'
-if os.path.isdir(by_id_dir):
-    for name in os.listdir(by_id_dir):
-        if name.endswith('-part4') and os.path.basename(os.path.realpath(os.path.join(by_id_dir, name))) == target_part:
-            id_aliases.add(name)
-            id_aliases.add(os.path.join(by_id_dir, name))
-
-# 1. Search for 'was /dev/target_part' or 'was <by-id>'
-for line in lines:
-    for alias in id_aliases:
-        if f'was {alias}' in line:
-            print(line.strip().split()[0])
-            sys.exit(0)
-
-# 2. Search for any vdev (GUID, sdX4, or by-id name) that is UNAVAIL/FAULTED/OFFLINE/REMOVED
-for line in lines:
-    parts = line.strip().split()
-    if len(parts) >= 2 and parts[1] in ['UNAVAIL', 'FAULTED', 'OFFLINE', 'REMOVED']:
-        if parts[0].isdigit() or parts[0].startswith(('sd', 'ata-', 'wwn-', 'scsi-')):
-            print(parts[0])
-            sys.exit(0)
-
-# 3. Hot-swap shifted letter: find sdX4 in pool that no longer maps to any other physical bay
-for line in lines:
-    parts = line.strip().split()
-    if len(parts) >= 2 and parts[0].startswith('sd') and parts[0] != target_part and parts[0] not in other_bay_parts:
-        print(parts[0])
-        sys.exit(0)
-
-# 4. Fallback to target partition name itself
-print(target_part)
-EOF
-)
-
-NEW_ZFS_VDEV=$(resolve_zfs_part_dev "$TARGET_DEV")
-step_start "[5/5] ZFS pool '${POOL_NAME}' (${OLD_TARGET} -> ${NEW_ZFS_VDEV})"
-ZFS_ERR=""
-if ! ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "$NEW_ZFS_VDEV" 2>&1); then
-    if [ "$OLD_TARGET" != "${CLEAN_DEV}4" ]; then
-        zpool offline "$POOL_NAME" "$OLD_TARGET" >/dev/null 2>&1 || true
-        ZFS_ERR=$(zpool replace -f "$POOL_NAME" "$OLD_TARGET" "$NEW_ZFS_VDEV" 2>&1) || step_fail "ZFS replace failed: $ZFS_ERR"
-    else
-        step_fail "ZFS replace failed: $ZFS_ERR"
-    fi
+step_start "[5/5] Storage RAID-5 array (md2 <- ${TARGET_DEV}4)"
+MD2_ERR=""
+if ! MD2_ERR=$(mdadm --manage "$ARRAY_DEV" --add "${TARGET_DEV}4" 2>&1); then
+    step_fail "mdadm --add failed on ${ARRAY_DEV}: $MD2_ERR"
 fi
-
-zpool clear "$POOL_NAME" >/dev/null 2>&1 || true
+mdadm --readwrite "$ARRAY_DEV" >/dev/null 2>&1 || true
+if [ "$(cat /sys/block/md2/md/sync_action 2>/dev/null)" == "resync" ]; then
+    echo idle > /sys/block/md2/md/sync_action 2>/dev/null || true
+fi
 step_ok
 
 echo -e "\n${CYAN}==============================================================================${NC}"

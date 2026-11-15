@@ -27,7 +27,7 @@ echo ""
 # 1. Dependencias recomendadas
 echo "[1/7] Verificando pacotes recomendados..."
 PKGS_MISSING=""
-for pkg in python3 smartmontools hdparm lm-sensors ifenslave targetcli-fb zfsutils-linux; do
+for pkg in python3 smartmontools hdparm lm-sensors ifenslave targetcli-fb mdadm; do
     if ! dpkg -s "$pkg" &>/dev/null; then
         PKGS_MISSING="$PKGS_MISSING $pkg"
     fi
@@ -73,19 +73,20 @@ done
 echo "      [OK] Scripts instalados com sucesso."
 
 # 3. Kernel, Modulos e Sensores
-echo "[3/7] Restaurando configuracoes de hardware (/etc/modules, sensors, ZFS ARC, initramfs)..."
-mkdir -p /etc/sensors.d /etc/modprobe.d
+echo "[3/7] Restaurando configuracoes de hardware (/etc/modules, sensors, udev, initramfs)..."
+mkdir -p /etc/sensors.d /etc/udev/rules.d
 
 cp -a "${FILES_DIR}/etc/modules" /etc/modules
 cp -a "${FILES_DIR}/etc/sensors.d/it8721.conf" /etc/sensors.d/it8721.conf
-cp -a "${FILES_DIR}/etc/modprobe.d/zfs.conf" /etc/modprobe.d/zfs.conf
 
-# Agendamento trimestral de integridade ZFS
-if [ -f "${FILES_DIR}/etc/cron.d/zfsutils-linux" ]; then
-    mkdir -p /etc/cron.d
-    cp -a "${FILES_DIR}/etc/cron.d/zfsutils-linux" /etc/cron.d/zfsutils-linux
-    chmod 644 /etc/cron.d/zfsutils-linux
+# Ajuste de cache de stripe para md2 (RAID5)
+if [ -f "${FILES_DIR}/etc/udev/rules.d/99-md-tuning.rules" ]; then
+    cp -a "${FILES_DIR}/etc/udev/rules.d/99-md-tuning.rules" /etc/udev/rules.d/99-md-tuning.rules
+    chmod 644 /etc/udev/rules.d/99-md-tuning.rules
 fi
+
+# Remove legados ZFS caso presentes
+rm -f /etc/modprobe.d/zfs.conf /etc/cron.d/zfsutils-linux
 
 # Hook de LCD instantaneo no initramfs
 if [ -f "${FILES_DIR}/etc/initramfs-tools/hooks/terastation_lcd" ]; then
@@ -102,7 +103,7 @@ if [ -f "${FILES_DIR}/etc/default/grub" ]; then
     cp -a "${FILES_DIR}/etc/default/grub" /etc/default/grub
     update-grub || true
 fi
-echo "      [OK] Modulos, initramfs e limites ZFS aplicados."
+echo "      [OK] Modulos, udev e initramfs aplicados."
 
 # 4. Privilegios Sudoers
 echo "[4/7] Restaurando permissoes sudoers..."
@@ -131,7 +132,7 @@ systemctl daemon-reload
 systemctl enable micon_boot.service lcd_monitor.service hotswap.service
 
 # Desativa servicos e timers redundantes/inuteis no appliance
-systemctl disable --now smartmontools zfs-zed.service fancontrol.service e2scrub_all.timer e2scrub_reap.service fstrim.timer man-db.timer apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl disable --now smartmontools fancontrol.service e2scrub_all.timer e2scrub_reap.service fstrim.timer man-db.timer apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 echo "      [OK] Servicos oficiais habilitados e servicos redundantes desativados."
 
 # 6. iSCSI Target Config (targetcli) e Customizacao SCSI Vendor BUFFALO
