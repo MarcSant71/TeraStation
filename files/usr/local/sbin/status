@@ -55,6 +55,7 @@ sorted_bays=("${all_bays[@]:0:$TOTAL_BAYS}")
 echo -e "${CYAN}==============================================================================${NC}"
 echo -e "${BOLD}       TeraStation TS5800D - Disk Map and Health Diagnostics                  ${NC}"
 echo -e "${CYAN}==============================================================================${NC}"
+echo -e "${CYAN}${BOLD}DISKS${NC}"
 printf "%-7s %-10s %-6s %-20s %-16s %s\n" "BAY" "DISK" "SIZE" "MODEL" "SERIAL" "STATUS"
 echo -e "------------------------------------------------------------------------------"
 
@@ -204,74 +205,94 @@ for p in "${sorted_bays[@]}"; do
 done
 
 echo -e "------------------------------------------------------------------------------"
+echo -e "${CYAN}${BOLD}VOLUMES${NC}"
+printf "%-7s %-10s %-6s %-20s %-16s %s\n" "TYPE" "DEVICE" "SIZE" "ARRAY" "INFO" "STATUS"
+echo -e "------------------------------------------------------------------------------"
 
-# OS Mirror Status (shown only when md0 or md1 is degraded or syncing)
-os_summary=$(python3 - << 'EOF'
-import os
-lines = []
-for md in ("md0", "md1"):
-    md_dir = f"/sys/block/{md}/md"
-    if not os.path.exists(md_dir):
+volumes_rows=$(python3 - << 'EOF'
+import os, re
+
+mdstat = ""
+try:
+    mdstat = open("/proc/mdstat").read()
+except Exception:
+    pass
+
+def fmt_size(md):
+    try:
+        b = int(open(f"/sys/block/{md}/size").read().strip()) * 512
+        if b >= 1024**4:
+            return f"{b / (1024**4):.1f}T"
+        if b >= 1024**3:
+            return f"{b / (1024**3):.1f}G"
+        return f"{b / (1024**2):.0f}M"
+    except Exception:
+        return "-"
+
+specs = [
+    ("md0", "OS", "RAID1", "Root (/)"),
+    ("md1", "OS", "RAID1", "Swap"),
+    ("md2", "ARRAY", "RAID5", None),
+]
+
+for md, vtype, level, info in specs:
+    dev = f"/dev/{md}"
+    m_blk = re.search(rf'(?ms)^{md}\s*:.*?(?=^\S|\Z)', mdstat)
+    blk = m_blk.group(0) if m_blk else ""
+    if not blk or "inactive" in blk:
+        row_info = "Bitmap:None" if md == "md2" else info
+        print(f"{vtype}|{dev}|-|{level} (-)|{row_info}|OFFLINE|RED")
         continue
+
+    sz = fmt_size(md)
+    md_dir = f"/sys/block/{md}/md"
     try:
         raid_disks = int(open(f"{md_dir}/raid_disks").read().strip())
         degraded = int(open(f"{md_dir}/degraded").read().strip())
         action = open(f"{md_dir}/sync_action").read().strip()
-        if degraded == 0 and action == "idle":
-            continue
         active = max(0, raid_disks - degraded)
-        lbl = f"RAID1:{action.upper()}({active}/{raid_disks})" if action != "idle" else f"RAID1:DEGRADED({active}/{raid_disks})"
-        size_lbl = "25.0G" if md == "md0" else "4.0G"
-        note = "OS ROOT MIRROR" if md == "md0" else "OS SWAP MIRROR"
-        lines.append(f"{md}|/dev/{md}|{size_lbl}|{lbl}|{note}")
     except Exception:
-        pass
-print("\n".join(lines))
-EOF
-)
-if [ -n "$os_summary" ]; then
-    while IFS='|' read -r _os_id _os_dev _os_sz _os_st _os_note; do
-        [ -z "$_os_id" ] && continue
-        printf "%-7s %-10s %-6s %-20s %s\n" "OS" "$_os_dev" "$_os_sz" "$_os_st" "$_os_note"
-    done <<< "$os_summary"
-    echo -e "------------------------------------------------------------------------------"
-fi
+        raid_disks, degraded, action, active = 0, 0, "idle", 0
 
-# RAID-5 Array Capacity & Health Summary
-if grep -q "^md2 : inactive" <<< "$mdstat_raw" || [ ! -b "$ARRAY_DEV" ]; then
-    printf "%-7s %-10s %-6s %-20s %s\n" "ARRAY" "$ARRAY_DEV" "-" "RAID5:INACTIVE" "VOLUME OFFLINE"
-    echo -e "------------------------------------------------------------------------------"
-elif [ -b "$ARRAY_DEV" ]; then
-    md2_summary=$(python3 - << EOF
-import os
-try:
-    b = int(open('/sys/block/md2/size').read().strip()) * 512
-    t_h = f"{b / (1024**4):.1f}T"
-    raid_disks = int(open('/sys/block/md2/md/raid_disks').read().strip())
-    degraded = int(open('/sys/block/md2/md/degraded').read().strip())
-    action = open('/sys/block/md2/md/sync_action').read().strip()
-    state = open('/sys/block/md2/md/array_state').read().strip().upper()
-    active_disks = max(0, raid_disks - degraded)
-    if degraded > 0:
-        state_lbl = "DEGRADED"
-    elif action != "idle":
-        state_lbl = action.upper()
+    if md == "md2":
+        bm_path = f"{md_dir}/bitmap/location"
+        has_bm = os.path.exists(bm_path) and open(bm_path).read().strip() != "none"
+        row_info = "Bitmap:Internal" if has_bm else "Bitmap:None"
     else:
-        state_lbl = state
-    bm_path = '/sys/block/md2/md/bitmap/location'
-    has_bm = os.path.exists(bm_path) and open(bm_path).read().strip() != 'none'
-    bm_lbl = "BITMAP: INTERNAL" if has_bm else "BITMAP: NONE"
-    print(f"{t_h} RAID5:{state_lbl}({active_disks}/{raid_disks}) {bm_lbl}")
-except Exception:
-    pass
+        row_info = info
+
+    has_spare = any(
+        "spare" in open(os.path.join(md_dir, d, "state")).read()
+        for d in os.listdir(md_dir) if d.startswith("dev-")
+    ) if os.path.exists(md_dir) else False
+
+    if (md == "md2" and degraded >= 2) or active == 0:
+        st, col = "FAILED", "RED"
+    elif action in ("recover", "resync") or (degraded > 0 and has_spare):
+        st, col = ("REBUILD" if action == "recover" or has_spare else action.upper()), "YELLOW"
+    elif degraded > 0:
+        st, col = "DEGRADED", "RED"
+    elif action != "idle":
+        st, col = action.upper(), "YELLOW"
+    else:
+        st, col = "ONLINE", "GREEN"
+
+    arr_lbl = f"{level} ({active}/{raid_disks})"
+    print(f"{vtype}|{dev}|{sz}|{arr_lbl}|{row_info}|{st}|{col}")
 EOF
 )
-    if [ -n "$md2_summary" ]; then
-        read -r t_size arr_state bm_info <<< "$md2_summary"
-        printf "%-7s %-10s %-6s %-20s %s\n" "ARRAY" "$ARRAY_DEV" "$t_size" "$arr_state" "$bm_info"
-        echo -e "------------------------------------------------------------------------------"
-    fi
-fi
+
+while IFS='|' read -r _vt _vd _vs _va _vi _vst _vcol; do
+    [ -z "$_vt" ] && continue
+    case "$_vcol" in
+        GREEN)  _vc="$GREEN" ;;
+        YELLOW) _vc="$YELLOW" ;;
+        RED)    _vc="$RED" ;;
+        *)      _vc="$NC" ;;
+    esac
+    printf "%-7s %-10s %-6s %-20s %-16s ${_vc}%s${NC}\n" "$_vt" "$_vd" "$_vs" "$_va" "$_vi" "$_vst"
+done <<< "$volumes_rows"
+echo -e "------------------------------------------------------------------------------"
 
 md2_dead=0
 if ! grep -q "^md2 :" <<< "$mdstat_raw" || grep -q "^md2 : inactive" <<< "$mdstat_raw"; then
