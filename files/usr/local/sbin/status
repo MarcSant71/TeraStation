@@ -329,7 +329,7 @@ elif [ "$REBUILDING_COUNT" -gt 0 ]; then
     if [ "$REBUILD_STAGE" == "1" ] || { [ -z "$REBUILD_STAGE" ] && [ "$os_rebuilding" -eq 1 ]; }; then
         echo -e "${YELLOW}${BOLD}STATUS: Stage 1/2 - Rebuilding OS${pct_info}.${NC}"
     else
-        echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5 ($ARRAY_DEV)${pct_info}.${NC}"
+        echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5${pct_info}.${NC}"
     fi
 elif [ "$md2_action" == "resync" ] || [ "$md2_action" == "check" ]; then
     pct_info=" (syncing)"
