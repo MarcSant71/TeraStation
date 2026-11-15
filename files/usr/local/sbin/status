@@ -242,7 +242,7 @@ def fmt_size(md):
 specs = [
     ("md0", "OS", "RAID1", "Root (/)"),
     ("md1", "OS", "RAID1", "Swap"),
-    ("md2", "ARRAY", "RAID5", "DATA"),
+    ("md2", "ARRAY", "RAID5", "Data"),
 ]
 
 for md, vtype, level, info in specs:
