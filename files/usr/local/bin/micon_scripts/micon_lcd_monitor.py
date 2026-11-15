@@ -463,6 +463,34 @@ def compute_sata_led_masks(pool_name="storage"):
     return bytearray([red_on, green_on]), bytearray([red_blink, green_blink])
 
 
+SMART_ALERT_DIR = "/var/lib/smartmontools/terastation_alerts"
+
+
+def has_active_smart_alert():
+    """Return True if any currently attached disk has a recorded SMART alert."""
+    try:
+        if not os.path.isdir(SMART_ALERT_DIR):
+            return False
+        alert_files = set(os.listdir(SMART_ALERT_DIR))
+        if not alert_files:
+            return False
+        res = subprocess.run(
+            ["lsblk", "-d", "-n", "-o", "NAME,SERIAL"],
+            capture_output=True, text=True, timeout=2
+        )
+        for line in res.stdout.splitlines():
+            parts = line.split()
+            if not parts:
+                continue
+            dev_name = parts[0].strip()
+            serial = parts[1].strip() if len(parts) > 1 else ""
+            if (serial and serial in alert_files) or (dev_name in alert_files):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def determine_storage_state(pool_name="storage"):
     """
     Determines overall storage state:
@@ -654,6 +682,7 @@ def main():
     last_sata_onoff = None
     last_sata_blink = None
     last_rebuild_flag = os.path.exists("/run/terastation_rebuild_in_progress")
+    last_smart_alert = False
 
     shutdown_confirm_active = False
     shutdown_confirm_expire = 0.0
@@ -784,24 +813,32 @@ def main():
                 # ------------------------------------------------------------------
                 if current_state == STATE_HEALTHY:
                     # --------------------------------------------------------------
-                    # HEALTHY STATE (GREEN)
+                    # HEALTHY STATE (GREEN, or GREEN + BLINKING INFO LED ON SMART ALERT)
                     # --------------------------------------------------------------
+                    smart_alert_active = has_active_smart_alert()
                     micon.set_lcd_buffer(libmicon.lcd_set_buffer0, SYS_TITLE, SYS_VERSION)
 
-                    if last_applied_state != STATE_HEALTHY:
+                    if last_applied_state != STATE_HEALTHY or smart_alert_active != last_smart_alert:
                         micon.send_write_cmd(1, libmicon.lcd_set_dispitem, 0x60)  # enable buffer0 + buffer1
                         micon.send_write_cmd(0, libmicon.lcd_changemode_auto)      # auto rotate every 5s
                         micon.set_lcd_brightness(libmicon.LCD_BRIGHT_FULL)
 
-                        # Solid Green LCD Backlight (no blink), ERROR & INFO LEDs OFF
+                        # Solid Green LCD Backlight; blink yellow INFO LED (0x02) on SMART alert
                         micon.send_write_cmd(2, libmicon.CMD_LED_CPU, bytearray([0x06, 0x07]))
-                        micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x00, 0x00]))
-                        micon.send_write_cmd(2, libmicon.CMD_LED_ONOFF, bytearray([0x00, 0x02]))
+                        if smart_alert_active:
+                            micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x02, 0x00]))
+                            micon.send_write_cmd(2, libmicon.CMD_LED_ONOFF, bytearray([0x02, 0x02]))
+                            if not last_smart_alert:
+                                micon.cmd_sound(libmicon.BZ_BUTTON)
+                        else:
+                            micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x00, 0x00]))
+                            micon.send_write_cmd(2, libmicon.CMD_LED_ONOFF, bytearray([0x00, 0x02]))
 
                         # Sound confirmation chime if recovering from Alert or Rebuilding
                         if last_applied_state in [STATE_ALERT, STATE_REBUILDING]:
                             micon.cmd_sound(libmicon.BZ_BUTTON)
 
+                        last_smart_alert = smart_alert_active
                         last_applied_state = STATE_HEALTHY
 
                 elif current_state == STATE_REBUILDING:
