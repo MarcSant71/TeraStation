@@ -190,7 +190,7 @@ init_storage() {
     echo -e "This procedure is intended for ${BOLD}DISASTER RECOVERY${NC} (loss of 2+ disks),"
     echo -e "where RAID-5 (/dev/md2) was lost and replacement disks have been inserted."
     echo ""
-    echo -e "${YELLOW}WHAT THIS PROCEDURE WILL DO:${NC}"
+    echo -e "${YELLOW}-------------------------[ WHAT THIS PROCEDURE WILL DO ]--------------------------${NC}"
     echo -e "  1. Verify physical presence of all 8 disks in the slots."
     echo -e "  2. Partition new/raw disks and align GPT partitions."
     echo -e "  3. Synchronize Debian RAID (md0 and md1) across all 8 disks."
