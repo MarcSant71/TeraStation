@@ -269,7 +269,7 @@ init_storage() {
     fi
     step_ok
 
-    step_start "[3/6] Stop iSCSI target & wipe partition 4 RAID metadata"
+    step_start "[3/6] Stop iSCSI target & wipe partitions"
     systemctl stop rtslib-fb-targetctl >/dev/null 2>&1 || true
     mdadm --stop "$ARRAY_DEV" >/dev/null 2>&1 || true
     udevadm settle
