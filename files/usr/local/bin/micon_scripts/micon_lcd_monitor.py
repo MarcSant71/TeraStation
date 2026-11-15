@@ -207,7 +207,7 @@ def _read_md_sync(md_name, mdstat_content=None):
     try:
         with open(os.path.join(md_dir, "sync_action"), "r") as f:
             action = f.read().strip()
-        if action not in ("recover", "resync"):
+        if action not in ("recover", "resync", "check"):
             return action, None, is_degraded
 
         # /proc/mdstat updates live every second, whereas sysfs sync_completed only
@@ -222,7 +222,7 @@ def _read_md_sync(md_name, mdstat_content=None):
             m_blk = re.search(rf'(?ms)^{re.escape(md_name)}\s*:.*?(?=^\S|\Z)', mdstat_content)
             if m_blk:
                 blk = m_blk.group(0)
-                m_prog = re.search(r'(?:recovery|resync)\s*=\s*([0-9.]+)%\s*\((\d+)/(\d+)\)', blk)
+                m_prog = re.search(r'(?:recovery|resync|check)\s*=\s*([0-9.]+)%\s*\((\d+)/(\d+)\)', blk)
                 if m_prog:
                     done_kb = int(m_prog.group(2))
                     total_kb = int(m_prog.group(3))
@@ -296,12 +296,12 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
     md_sys_running = (pct0 is not None or pct1 is not None)
     md_data_running = (pct2 is not None)
     md_sys_queued = (
-        act0 in ("recover", "resync")
-        or act1 in ("recover", "resync")
+        act0 in ("recover", "resync", "check")
+        or act1 in ("recover", "resync", "check")
         or _md_has_spare("md0")
         or _md_has_spare("md1")
     )
-    md_data_queued = (act2 in ("recover", "resync") or _md_has_spare("md2"))
+    md_data_queued = (act2 in ("recover", "resync", "check") or _md_has_spare("md2"))
 
     if not (md_sys_running or md_data_running or md_sys_queued or md_data_queued):
         return False, "", ""
@@ -315,7 +315,10 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
         p1 = pct1 if (pct1 is not None and not (act1 == "resync" and target_disk)) else (0.0 if deg1 else 100.0)
         overall_pct = (p0 * 0.862) + (p1 * 0.138)
         val = f"{overall_pct:.1f}%"
-        title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
+        if (act0 == "check" or act1 == "check") and not target_disk:
+            title = "CHECK: OS MIRROR"
+        else:
+            title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
         detail = f"PROGRESS: {val:<6}"
         return True, title[:16], detail[:16]
 
@@ -323,14 +326,20 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
     if md_data_running:
         target_disk = _find_target_disk(hint_disk=hint_disk, md_names=("md2", "md0", "md1"))
         val = f"{pct2:.1f}%"
-        title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: RAID  "
+        if act2 == "check" and not target_disk:
+            title = "CHECK: RAID-5   "
+        else:
+            title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: RAID  "
         detail = f"PROGRESS: {val:<6}"
         return True, title[:16], detail[:16]
 
     # 3. Fallback when an array is queued/starting without active percentage yet
     target_disk = _find_target_disk(hint_disk=hint_disk)
-    stage = "REBUILD1" if md_sys_queued else "REBUILD2"
-    title = f"{stage}: DISK {target_disk}" if target_disk else f"{stage}: RAID  "
+    if not target_disk and (act0 == "check" or act1 == "check" or act2 == "check"):
+        title = "CHECK: RAID     "
+    else:
+        stage = "REBUILD1" if md_sys_queued else "REBUILD2"
+        title = f"{stage}: DISK {target_disk}" if target_disk else f"{stage}: RAID  "
     detail = f"PROGRESS: {'QUEUED':<6}"
     return True, title[:16], detail[:16]
 
@@ -809,9 +818,9 @@ def main():
                         micon.cmd_force_lcd_disp(libmicon.lcd_disp_buffer0)       # lock on Buffer 0
                         micon.set_lcd_brightness(libmicon.LCD_BRIGHT_FULL)
 
-                        # Solid Orange LCD Backlight (no blink), INFO_LED ON, ERROR_LED OFF
+                        # Solid Orange LCD Backlight, INFO_LED BLINKING, ERROR_LED OFF
                         micon.send_write_cmd(2, libmicon.CMD_LED_CPU, bytearray([0x06, 0x07]))
-                        micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x00, 0x00]))
+                        micon.send_write_cmd(2, libmicon.CMD_LED_BLINK, bytearray([0x02, 0x00]))
                         micon.send_write_cmd(2, libmicon.CMD_LED_ONOFF, bytearray([0x02, 0x03]))
 
                         # Notification beep on entering Rebuild or Maintenance Scrub
