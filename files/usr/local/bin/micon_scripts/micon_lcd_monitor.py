@@ -170,7 +170,10 @@ def _get_md_degraded_count(md_name):
 
 
 def _md_has_spare(md_name):
-    """Returns True if md_name currently has a spare device rebuilding in sysfs."""
+    """Returns True if active md_name currently has a spare device rebuilding in sysfs."""
+    blk = _md_block(md_name, _read_mdstat())
+    if not blk or "inactive" in blk:
+        return False
     md_dir = f"/sys/block/{md_name}/md"
     if not os.path.exists(md_dir):
         return False
@@ -396,12 +399,18 @@ def compute_sata_led_masks(pool_name="storage"):
 
     md_raw = _read_mdstat()
     md2_blk = _md_block("md2", md_raw)
+    md2_deg = _get_md_degraded_count("md2")
+    md2_dead = (not md2_blk) or ("inactive" in md2_blk) or (md2_deg is not None and md2_deg >= 2)
+
+    if md2_dead:
+        # Data volume is unrecoverable: blink ALL 8 bay LEDs red
+        return bytearray([0xFF, 0x00]), bytearray([0xFF, 0x00])
 
     for disk_num, p_id, bit in BAYS:
         link_path = f"/dev/disk/by-path/{p_id}"
         if not os.path.islink(link_path):
-            # Physical bay is empty: only blink RED LED if any array is degraded or md2 is down
-            is_degraded = ("[_" in md_raw) or (not md2_blk) or ("inactive" in md2_blk)
+            # Physical bay is empty: only blink RED LED if any array is degraded
+            is_degraded = bool(re.search(r'\[[U_]*_[U_]*\]', md_raw))
             if is_degraded:
                 red_on |= (1 << bit)
                 red_blink |= (1 << bit)

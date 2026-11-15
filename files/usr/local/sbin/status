@@ -98,6 +98,9 @@ EOF
 
 if [ -z "$REBUILD_PCT" ]; then
     for md in md0 md1 md2; do
+        if grep -q "^${md} : inactive" <<< "$mdstat_raw"; then
+            continue
+        fi
         if ls /sys/block/$md/md/dev-*/state 2>/dev/null | xargs grep -q "spare" 2>/dev/null; then
             REBUILD_PCT="syncing"
             break
@@ -125,10 +128,13 @@ for p in "${sorted_bays[@]}"; do
         is_failed=0
         is_rebuilding=0
 
-        # Check if this disk is actively rebuilding in md0, md1, or md2
+        # Check if this disk is actively rebuilding in active md0, md1, or md2
         for md_part in "md0:${dev_name}2" "md1:${dev_name}3" "md2:${dev_name}4"; do
             md="${md_part%%:*}"
             part="${md_part#*:}"
+            if grep -q "^${md} : inactive" <<< "$mdstat_raw"; then
+                continue
+            fi
             if [ -f "/sys/block/$md/md/dev-${part}/state" ]; then
                 if grep -q "spare" "/sys/block/$md/md/dev-${part}/state" 2>/dev/null; then
                     is_rebuilding=1
@@ -181,7 +187,7 @@ for p in "${sorted_bays[@]}"; do
     else
         # Determine if this empty bay was part of an active array (real failure) or simply unpopulated
         is_missing_member=0
-        if echo "$mdstat_raw" | grep -q "\[_" || [ ! -b "$ARRAY_DEV" ]; then
+        if grep -qE '\[[U_]*_[U_]*\]' <<< "$mdstat_raw" || grep -q "^md2 : inactive" <<< "$mdstat_raw" || [ ! -b "$ARRAY_DEV" ]; then
             is_missing_member=1
         fi
 
@@ -198,7 +204,10 @@ done
 echo -e "------------------------------------------------------------------------------"
 
 # RAID-5 Array Capacity & Health Summary
-if [ -b "$ARRAY_DEV" ]; then
+if grep -q "^md2 : inactive" <<< "$mdstat_raw" || [ ! -b "$ARRAY_DEV" ]; then
+    printf "%-7s %-10s %-6s %-20s %s\n" "ARRAY" "$ARRAY_DEV" "-" "RAID5:INACTIVE" "VOLUME OFFLINE"
+    echo -e "------------------------------------------------------------------------------"
+elif [ -b "$ARRAY_DEV" ]; then
     md2_summary=$(python3 - << EOF
 import os, subprocess
 try:
