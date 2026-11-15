@@ -196,7 +196,8 @@ init_storage() {
     echo -e "  6. Update /etc/mdadm/mdadm.conf and initramfs."
     echo -e "  7. Restart kernel iSCSI target service (LIO)."
     echo -e "${RED}--------------------------------------------------------------------------------${NC}"
-    echo -e "${RED}${BOLD}DANGER:${NC} All data on $ARRAY_DEV will be ${BOLD}ERASED${NC} and recreated empty."
+    echo -e "${RED}${BOLD}DANGER:${NC} All data on $ARRAY_DEV will be ${BOLD}PERMANENTLY ERASED${NC}."
+    echo -e "        This action ${BOLD}CANNOT BE UNDONE${NC}."
     echo -e "To confirm, type ${BOLD}INITIALIZE${NC} (in uppercase):"
     read -p "Confirmation: " CONFIRM_INIT
 
