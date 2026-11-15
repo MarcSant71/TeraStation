@@ -64,6 +64,7 @@ REBUILD_CANDIDATE_DEV=""
 REBUILD_CANDIDATE_DISK=""
 REBUILDING_DEV=""
 REBUILDING_DISK=""
+REBUILDING_DISKS=()
 REBUILDING_COUNT=0
 FAILED_COUNT=0
 EMPTY_DISKS=()
@@ -152,6 +153,7 @@ for p in "${sorted_bays[@]}"; do
         if [ "$is_rebuilding" -eq 1 ]; then
             status_text="${YELLOW}REBUILD${NC}"
             REBUILDING_COUNT=$((REBUILDING_COUNT + 1))
+            REBUILDING_DISKS+=("$disk_label")
             if [ -z "$REBUILDING_DEV" ]; then
                 REBUILDING_DEV="$dev_path"
                 REBUILDING_DISK="$disk_label"
@@ -203,6 +205,38 @@ done
 
 echo -e "------------------------------------------------------------------------------"
 
+# OS Mirror Status (shown only when md0 or md1 is degraded or syncing)
+os_summary=$(python3 - << 'EOF'
+import os
+lines = []
+for md in ("md0", "md1"):
+    md_dir = f"/sys/block/{md}/md"
+    if not os.path.exists(md_dir):
+        continue
+    try:
+        raid_disks = int(open(f"{md_dir}/raid_disks").read().strip())
+        degraded = int(open(f"{md_dir}/degraded").read().strip())
+        action = open(f"{md_dir}/sync_action").read().strip()
+        if degraded == 0 and action == "idle":
+            continue
+        active = max(0, raid_disks - degraded)
+        lbl = f"RAID1:{action.upper()}({active}/{raid_disks})" if action != "idle" else f"RAID1:DEGRADED({active}/{raid_disks})"
+        size_lbl = "25.0G" if md == "md0" else "4.0G"
+        note = "OS ROOT MIRROR" if md == "md0" else "OS SWAP MIRROR"
+        lines.append(f"{md}|/dev/{md}|{size_lbl}|{lbl}|{note}")
+    except Exception:
+        pass
+print("\n".join(lines))
+EOF
+)
+if [ -n "$os_summary" ]; then
+    while IFS='|' read -r _os_id _os_dev _os_sz _os_st _os_note; do
+        [ -z "$_os_id" ] && continue
+        printf "%-7s %-10s %-6s %-20s %s\n" "OS" "$_os_dev" "$_os_sz" "$_os_st" "$_os_note"
+    done <<< "$os_summary"
+    echo -e "------------------------------------------------------------------------------"
+fi
+
 # RAID-5 Array Capacity & Health Summary
 if grep -q "^md2 : inactive" <<< "$mdstat_raw" || [ ! -b "$ARRAY_DEV" ]; then
     printf "%-7s %-10s %-6s %-20s %s\n" "ARRAY" "$ARRAY_DEV" "-" "RAID5:INACTIVE" "VOLUME OFFLINE"
@@ -246,6 +280,15 @@ elif [ -f /sys/block/md2/md/degraded ] && [ "$(cat /sys/block/md2/md/degraded 2>
     md2_dead=1
 fi
 md2_action=$(cat /sys/block/md2/md/sync_action 2>/dev/null || true)
+os_rebuilding=0
+for _os_md in md0 md1; do
+    _os_act=$(cat "/sys/block/${_os_md}/md/sync_action" 2>/dev/null || true)
+    if [ "$_os_act" == "recover" ] || [ "$_os_act" == "resync" ] || \
+       ls /sys/block/${_os_md}/md/dev-*/state 2>/dev/null | xargs grep -q "spare" 2>/dev/null; then
+        os_rebuilding=1
+        break
+    fi
+done
 
 if [ "$FAILED_COUNT" -ge 2 ] || [ "$md2_dead" -eq 1 ]; then
     echo -e "${RED}${BOLD}STATUS: Critical failure on 2+ disks. RAID-5 ($ARRAY_DEV) unrecoverable.${NC}"
@@ -260,7 +303,13 @@ elif [ "$REBUILDING_COUNT" -gt 0 ]; then
     if [ -n "$REBUILD_PCT" ]; then
         pct_info=" (${REBUILD_PCT})"
     fi
-    echo -e "${YELLOW}${BOLD}STATUS: Rebuilding in progress on $REBUILDING_DISK${pct_info}.${NC}"
+    rebuilding_list=$(printf "%s, " "${REBUILDING_DISKS[@]}")
+    rebuilding_list="${rebuilding_list%, }"
+    if [ "$os_rebuilding" -eq 1 ]; then
+        echo -e "${YELLOW}${BOLD}STATUS: Stage 1/2 - Rebuilding OS mirrors (md0/md1) on ${rebuilding_list}${pct_info}.${NC}"
+    else
+        echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5 ($ARRAY_DEV) on ${rebuilding_list}${pct_info}.${NC}"
+    fi
 elif [ "$md2_action" == "resync" ] || [ "$md2_action" == "check" ]; then
     pct_info=" (syncing)"
     if [ -n "$REBUILD_PCT" ]; then

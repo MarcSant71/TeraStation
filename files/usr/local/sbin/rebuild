@@ -191,10 +191,9 @@ init_storage() {
     echo -e "  1. Verify physical presence of all 8 disks in the slots."
     echo -e "  2. Partition new/raw disks and align GPT partitions."
     echo -e "  3. Synchronize Debian RAID (md0 and md1) across all 8 disks."
-    echo -e "  4. Install GRUB bootloader on all 8 disks."
-    echo -e "  5. Recreate RAID-5 storage array '$ARRAY_DEV' (8 disks, bitmap=internal)."
-    echo -e "  6. Update /etc/mdadm/mdadm.conf and initramfs."
-    echo -e "  7. Restart kernel iSCSI target service (LIO)."
+    echo -e "  4. Recreate RAID-5 storage array '$ARRAY_DEV' (8 disks, bitmap=internal)."
+    echo -e "  5. Update /etc/mdadm/mdadm.conf, initramfs and GRUB bootloader (all 8 disks)."
+    echo -e "  6. Restart kernel iSCSI target service (LIO)."
     echo -e "${RED}--------------------------------------------------------------------------------${NC}"
     echo -e "${RED}${BOLD}DANGER:${NC} All data on $ARRAY_DEV will be ${BOLD}PERMANENTLY ERASED${NC}."
     echo -e "        This action ${BOLD}CANNOT BE UNDONE${NC}."
@@ -207,7 +206,7 @@ init_storage() {
     fi
 
     echo ""
-    step_start "[1/5] Physical presence of all 8 disks"
+    step_start "[1/6] Physical presence of all 8 disks"
     local md2_parts=()
     local missing_disks=()
     local donor_disk=""
@@ -239,7 +238,7 @@ init_storage() {
     fi
     step_ok
 
-    step_start "[2/5] Partitions, OS mirrors (md0/md1) and GRUB (8 disks)"
+    step_start "[2/6] Partitions and OS mirrors (md0/md1 across 8 disks)"
     for p in "${sorted_bays[@]}"; do
         local dev_name
         dev_name=$(basename "$(readlink -f "/dev/disk/by-path/$p")")
@@ -259,7 +258,6 @@ init_storage() {
         if ! grep -q -E "(^|[[:space:]])${dev_name}3\[[0-9]+\]([[:space:]]|$)" /proc/mdstat; then
             mdadm --manage /dev/md1 --add "${dev_path}3" >/dev/null 2>&1 || true
         fi
-        grub-install "$dev_path" >/dev/null 2>&1 || true
     done
     mdadm --readwrite /dev/md0 >/dev/null 2>&1 || true
     mdadm --readwrite /dev/md1 >/dev/null 2>&1 || true
@@ -271,7 +269,7 @@ init_storage() {
     fi
     step_ok
 
-    step_start "[3/5] Stop iSCSI target & wipe partition 4 RAID metadata"
+    step_start "[3/6] Stop iSCSI target & wipe partition 4 RAID metadata"
     systemctl stop rtslib-fb-targetctl >/dev/null 2>&1 || true
     mdadm --stop "$ARRAY_DEV" >/dev/null 2>&1 || true
     udevadm settle
@@ -282,7 +280,7 @@ init_storage() {
     done
     step_ok
 
-    step_start "[4/5] Recreate RAID-5 (${ARRAY_DEV}, bitmap=internal) & initramfs"
+    step_start "[4/6] Recreate RAID-5 storage array (${ARRAY_DEV}, bitmap=internal)"
     local md2_create_err=""
     if ! md2_create_err=$(mdadm --create "$ARRAY_DEV" --run --level=5 --raid-devices="${#md2_parts[@]}" --chunk=512K --bitmap=internal --metadata=1.2 "${md2_parts[@]}" 2>&1); then
         step_fail "Failed to create RAID-5 array '$ARRAY_DEV': $md2_create_err"
@@ -295,10 +293,13 @@ init_storage() {
     echo 2048 > /sys/block/md2/md/stripe_cache_size 2>/dev/null || true
     sed -i '/^ARRAY[[:space:]]\+\/dev\/md\/\?2/d' /etc/mdadm/mdadm.conf
     mdadm --detail --scan "$ARRAY_DEV" >> /etc/mdadm/mdadm.conf
+    step_ok
+
+    step_start "[5/6] Update initramfs and GRUB bootloader (all 8 disks)"
     update-initramfs -u >/dev/null 2>&1 || true
     step_ok
 
-    step_start "[5/5] iSCSI storage target service (LIO -> ${ARRAY_DEV})"
+    step_start "[6/6] iSCSI storage target service (LIO -> ${ARRAY_DEV})"
     if ! systemctl restart rtslib-fb-targetctl >/dev/null 2>&1; then
         step_fail "Failed to restart rtslib-fb-targetctl!"
     fi
