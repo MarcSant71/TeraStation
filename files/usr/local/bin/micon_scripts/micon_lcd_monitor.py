@@ -243,14 +243,14 @@ def _read_md_sync(md_name, mdstat_content=None):
         return "idle", None, is_degraded
 
 
-def _find_target_disk(hint_disk=None):
+def _find_target_disk(hint_disk=None, md_names=("md0", "md1", "md2")):
     """
     Resolves the physical Disk Number (1-8) being rebuilt from authoritative kernel sources:
-    1. mdadm sysfs 'spare' device state across md0, md1, md2
+    1. mdadm sysfs 'spare' device state across the specified md arrays
     2. Caller-supplied hint_disk (active rebuild script lock)
     """
     target_disk = None
-    for md_name in ("md0", "md1", "md2"):
+    for md_name in md_names:
         md_dir = f"/sys/block/{md_name}/md"
         if not os.path.exists(md_dir):
             continue
@@ -293,43 +293,46 @@ def check_rebuild_progress(pool_name="storage", hint_disk=None):
     act1, pct1, deg1 = _read_md_sync("md1", mdstat)
     act2, pct2, deg2 = _read_md_sync("md2", mdstat)
 
-    md_sys_active = (
-        pct0 is not None
-        or pct1 is not None
-        or act0 in ("recover", "resync")
+    md_sys_running = (pct0 is not None or pct1 is not None)
+    md_data_running = (pct2 is not None)
+    md_sys_queued = (
+        act0 in ("recover", "resync")
         or act1 in ("recover", "resync")
         or _md_has_spare("md0")
         or _md_has_spare("md1")
     )
-    md_data_active = (pct2 is not None or act2 in ("recover", "resync") or _md_has_spare("md2"))
+    md_data_queued = (act2 in ("recover", "resync") or _md_has_spare("md2"))
 
-    if not md_sys_active and not md_data_active:
+    if not (md_sys_running or md_data_running or md_sys_queued or md_data_queued):
         return False, "", ""
 
-    target_disk = _find_target_disk(hint_disk=hint_disk)
-
+    # Prefer whichever stage is actively moving data over arrays marked DELAYED
     # 1. Stage 1: Debian OS & Swap mirrors (md0 + md1)
-    if md_sys_active:
+    if md_sys_running:
+        target_disk = _find_target_disk(hint_disk=hint_disk, md_names=("md0", "md1", "md2"))
         # When a spare disk is queued waiting for a parity resync, report 0.0% for that array until recover begins
         p0 = pct0 if (pct0 is not None and not (act0 == "resync" and target_disk)) else (0.0 if deg0 else 100.0)
         p1 = pct1 if (pct1 is not None and not (act1 == "resync" and target_disk)) else (0.0 if deg1 else 100.0)
-        if pct0 is not None or pct1 is not None:
-            overall_pct = (p0 * 0.862) + (p1 * 0.138)
-            val = f"{overall_pct:.1f}%"
-        else:
-            val = f"{'QUEUED':<6}"
+        overall_pct = (p0 * 0.862) + (p1 * 0.138)
+        val = f"{overall_pct:.1f}%"
         title = f"REBUILD1: DISK {target_disk}" if target_disk else "REBUILD1: RAID  "
         detail = f"PROGRESS: {val:<6}"
         return True, title[:16], detail[:16]
 
     # 2. Stage 2: Storage RAID-5 array (md2)
-    if md_data_active:
-        val = f"{pct2:.1f}%" if pct2 is not None else f"{'QUEUED':<6}"
+    if md_data_running:
+        target_disk = _find_target_disk(hint_disk=hint_disk, md_names=("md2", "md0", "md1"))
+        val = f"{pct2:.1f}%"
         title = f"REBUILD2: DISK {target_disk}" if target_disk else "REBUILD2: RAID  "
         detail = f"PROGRESS: {val:<6}"
         return True, title[:16], detail[:16]
 
-    return False, "", ""
+    # 3. Fallback when an array is queued/starting without active percentage yet
+    target_disk = _find_target_disk(hint_disk=hint_disk)
+    stage = "REBUILD1" if md_sys_queued else "REBUILD2"
+    title = f"{stage}: DISK {target_disk}" if target_disk else f"{stage}: RAID  "
+    detail = f"PROGRESS: {'QUEUED':<6}"
+    return True, title[:16], detail[:16]
 
 
 def check_mdstat_health():
