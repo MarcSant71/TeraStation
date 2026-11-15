@@ -197,9 +197,9 @@ init_storage() {
     echo -e "  4. Recreate RAID-5 storage array '$ARRAY_DEV' (8 disks, bitmap=internal)."
     echo -e "  5. Update /etc/mdadm/mdadm.conf, initramfs and GRUB bootloader (all 8 disks)."
     echo -e "  6. Restart kernel iSCSI target service (LIO)."
-    echo -e "${RED}--------------------------------------------------------------------------------${NC}"
-    echo -e "${RED}${BOLD}DANGER:${NC} All data on $ARRAY_DEV will be ${BOLD}PERMANENTLY ERASED${NC}."
-    echo -e "        This action ${BOLD}CANNOT BE UNDONE${NC}."
+    echo -e "${RED}-----------------------------------[ DANGER ]-----------------------------------${NC}"
+    echo -e "All data on $ARRAY_DEV will be ${BOLD}PERMANENTLY ERASED${NC}."
+    echo -e "This action ${BOLD}CANNOT BE UNDONE${NC}."
     echo -e "To confirm, type ${BOLD}INITIALIZE${NC} (in uppercase):"
     read -p "Confirmation: " CONFIRM_INIT
 
