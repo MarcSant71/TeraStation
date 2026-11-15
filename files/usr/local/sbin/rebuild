@@ -280,7 +280,7 @@ init_storage() {
     done
     step_ok
 
-    step_start "[4/6] Recreate RAID-5 storage array (${ARRAY_DEV}, bitmap=internal)"
+    step_start "[4/6] Recreate RAID-5 storage array (${ARRAY_DEV})"
     local md2_create_err=""
     if ! md2_create_err=$(mdadm --create "$ARRAY_DEV" --run --level=5 --raid-devices="${#md2_parts[@]}" --chunk=512K --bitmap=internal --metadata=1.2 "${md2_parts[@]}" 2>&1); then
         step_fail "Failed to create RAID-5 array '$ARRAY_DEV': $md2_create_err"
