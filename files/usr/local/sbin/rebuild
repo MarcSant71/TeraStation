@@ -305,14 +305,12 @@ init_storage() {
     fi
     step_ok
 
-    echo -e "\n${CYAN}================================================================================${NC}"
+    echo -e "\n${CYAN}==============================================================================${NC}"
     echo -e "${GREEN}${BOLD}     STORAGE INITIALIZED SUCCESSFULLY! NEW RAID-5 VOLUME READY                 ${NC}"
-    echo -e "${CYAN}================================================================================${NC}"
-    echo -e "Next steps on Windows:"
-    echo -e "  1. Open Disk Management (diskmgmt.msc)."
-    echo -e "  2. Initialize disk in GPT and format as quick NTFS (Drive G:)."
-    echo -e "  3. Run your restore script: Restore_PC.cmd."
-    echo -e "${CYAN}================================================================================${NC}"
+    echo -e "${CYAN}==============================================================================${NC}"
+    echo -e "Checking updated system status...\n"
+
+    status
     exit 0
 }
 
