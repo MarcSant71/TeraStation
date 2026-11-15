@@ -243,9 +243,9 @@ if grep -q "^md2 : inactive" <<< "$mdstat_raw" || [ ! -b "$ARRAY_DEV" ]; then
     echo -e "------------------------------------------------------------------------------"
 elif [ -b "$ARRAY_DEV" ]; then
     md2_summary=$(python3 - << EOF
-import os, subprocess
+import os
 try:
-    b = int(subprocess.check_output(['/sbin/blockdev', '--getsize64', '$ARRAY_DEV'], text=True).strip())
+    b = int(open('/sys/block/md2/size').read().strip()) * 512
     t_h = f"{b / (1024**4):.1f}T"
     raid_disks = int(open('/sys/block/md2/md/raid_disks').read().strip())
     degraded = int(open('/sys/block/md2/md/degraded').read().strip())
