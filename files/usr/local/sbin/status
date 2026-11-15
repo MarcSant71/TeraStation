@@ -326,28 +326,10 @@ elif [ "$REBUILDING_COUNT" -gt 0 ]; then
     if [ -n "$REBUILD_PCT" ]; then
         pct_info=" (${REBUILD_PCT})"
     fi
-    rebuilding_list=$(printf "%s, " "${REBUILDING_DISKS[@]}")
-    rebuilding_list="${rebuilding_list%, }"
-    if [ "$REBUILD_STAGE" == "1" ]; then
-        if [ ${#OS_REBUILDING_DISKS[@]} -gt 0 ]; then
-            stage_disks=$(printf "%s, " "${OS_REBUILDING_DISKS[@]}")
-            stage_disks="${stage_disks%, }"
-        else
-            stage_disks="$rebuilding_list"
-        fi
-        echo -e "${YELLOW}${BOLD}STATUS: Stage 1/2 - Rebuilding OS mirrors (md0/md1) on ${stage_disks}${pct_info}.${NC}"
-    elif [ "$REBUILD_STAGE" == "2" ]; then
-        if [ ${#MD2_REBUILDING_DISKS[@]} -gt 0 ]; then
-            stage_disks=$(printf "%s, " "${MD2_REBUILDING_DISKS[@]}")
-            stage_disks="${stage_disks%, }"
-        else
-            stage_disks="$rebuilding_list"
-        fi
-        echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5 ($ARRAY_DEV) on ${stage_disks}${pct_info}.${NC}"
-    elif [ "$os_rebuilding" -eq 1 ]; then
-        echo -e "${YELLOW}${BOLD}STATUS: Stage 1/2 - Rebuilding OS mirrors (md0/md1) on ${rebuilding_list}${pct_info}.${NC}"
+    if [ "$REBUILD_STAGE" == "1" ] || { [ -z "$REBUILD_STAGE" ] && [ "$os_rebuilding" -eq 1 ]; }; then
+        echo -e "${YELLOW}${BOLD}STATUS: Stage 1/2 - Rebuilding OS${pct_info}.${NC}"
     else
-        echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5 ($ARRAY_DEV) on ${rebuilding_list}${pct_info}.${NC}"
+        echo -e "${YELLOW}${BOLD}STATUS: Stage 2/2 - Rebuilding RAID-5 ($ARRAY_DEV)${pct_info}.${NC}"
     fi
 elif [ "$md2_action" == "resync" ] || [ "$md2_action" == "check" ]; then
     pct_info=" (syncing)"
