@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# TeraStation TS5800D - smartd alert hook
+# Records SMART alert reason keyed by drive serial (for `status`) and sounds buzzer.
+
+ALERT_DIR="/var/lib/smartmontools/terastation_alerts"
+mkdir -p "$ALERT_DIR" 2>/dev/null || true
+
+dev="${SMARTD_DEVICE:-}"
+if [ -n "$dev" ] && [ -b "$dev" ]; then
+    serial=$(lsblk -d -n -o SERIAL "$dev" 2>/dev/null | tr -d '[:space:]' || true)
+    key="${serial:-$(basename "$dev")}"
+    reason="${SMARTD_FAILTYPE:-SMART}: ${SMARTD_MESSAGE:-Check journalctl -u smartmontools}"
+    reason=$(printf '%s' "$reason" | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+    printf '%s (%s)\n' "$reason" "$(date '+%Y-%m-%d %H:%M')" > "${ALERT_DIR}/${key}" 2>/dev/null || true
+fi
+
+if [ -x /usr/bin/python3 ] && [ -f /usr/local/bin/micon_scripts/micon_beep.py ]; then
+    /usr/bin/python3 /usr/local/bin/micon_scripts/micon_beep.py >/dev/null 2>&1 || true
+fi
+exit 0

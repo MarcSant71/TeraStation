@@ -70,6 +70,10 @@ MD2_REBUILDING_DISKS=()
 REBUILDING_COUNT=0
 FAILED_COUNT=0
 EMPTY_DISKS=()
+ALERT_COUNT=0
+ALERT_DISKS=()
+ALERT_FIRST_MSG=""
+SMART_ALERT_DIR="/var/lib/smartmontools/terastation_alerts"
 
 read -r REBUILD_STAGE REBUILD_PCT <<< "$(python3 - << 'EOF'
 import re
@@ -193,6 +197,23 @@ for p in "${sorted_bays[@]}"; do
             if [ -z "$REBUILD_CANDIDATE_DEV" ]; then
                 REBUILD_CANDIDATE_DEV="$dev_path"
                 REBUILD_CANDIDATE_DISK="$disk_label"
+            fi
+        elif [ "$is_rebuilding" -eq 0 ]; then
+            alert_key="${serial// /}"
+            alert_file=""
+            if [ -n "$alert_key" ] && [ -f "${SMART_ALERT_DIR}/${alert_key}" ]; then
+                alert_file="${SMART_ALERT_DIR}/${alert_key}"
+            elif [ -f "${SMART_ALERT_DIR}/${dev_name}" ]; then
+                alert_file="${SMART_ALERT_DIR}/${dev_name}"
+            fi
+            if [ -n "$alert_file" ]; then
+                status_text="${YELLOW}ALERT${NC}"
+                ALERT_COUNT=$((ALERT_COUNT + 1))
+                ALERT_DISKS+=("$disk_label")
+                if [ -z "$ALERT_FIRST_MSG" ]; then
+                    _raw_alert=$(head -n1 "$alert_file" 2>/dev/null || echo "SMART warning")
+                    ALERT_FIRST_MSG="${disk_label} (${dev_path}): ${_raw_alert}"
+                fi
             fi
         fi
 
@@ -337,6 +358,11 @@ elif [ "$md2_action" == "resync" ] || [ "$md2_action" == "check" ]; then
         pct_info=" (${REBUILD_PCT})"
     fi
     echo -e "${YELLOW}${BOLD}STATUS: Array ${md2_action} in progress on $ARRAY_DEV${pct_info}.${NC}"
+elif [ "$ALERT_COUNT" -eq 1 ]; then
+    echo -e "${YELLOW}${BOLD}STATUS: SMART alert on ${ALERT_FIRST_MSG}.${NC}"
+elif [ "$ALERT_COUNT" -gt 1 ]; then
+    _alert_list=$(IFS=", "; echo "${ALERT_DISKS[*]}")
+    echo -e "${YELLOW}${BOLD}STATUS: SMART alert on ${_alert_list} (check: journalctl -u smartmontools).${NC}"
 else
     echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized across md0, md1, and md2.${NC}"
 fi

@@ -136,6 +136,11 @@ if [ -f "${FILES_DIR}/etc/smartd.conf" ]; then
     cp -a "${FILES_DIR}/etc/smartd.conf" /etc/smartd.conf
     chmod 644 /etc/smartd.conf
 fi
+if [ -f "${FILES_DIR}/etc/smartmontools/run.d/20terastation-alert" ]; then
+    mkdir -p /etc/smartmontools/run.d
+    cp -a "${FILES_DIR}/etc/smartmontools/run.d/20terastation-alert" /etc/smartmontools/run.d/20terastation-alert
+    chmod 755 /etc/smartmontools/run.d/20terastation-alert
+fi
 systemctl enable --now smartmontools.service 2>/dev/null || true
 
 # Desativa servicos e timers redundantes/inuteis no appliance
