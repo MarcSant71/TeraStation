@@ -242,7 +242,7 @@ def fmt_size(md):
 specs = [
     ("md0", "OS", "RAID1", "Root (/)"),
     ("md1", "OS", "RAID1", "Swap"),
-    ("md2", "ARRAY", "RAID5", None),
+    ("md2", "ARRAY", "RAID5", "DATA"),
 ]
 
 for md, vtype, level, info in specs:
@@ -250,8 +250,7 @@ for md, vtype, level, info in specs:
     m_blk = re.search(rf'(?ms)^{md}\s*:.*?(?=^\S|\Z)', mdstat)
     blk = m_blk.group(0) if m_blk else ""
     if not blk or "inactive" in blk:
-        row_info = "Bitmap:None" if md == "md2" else info
-        print(f"{vtype}|{dev}|-|{level} (-)|{row_info}|OFFLINE|RED")
+        print(f"{vtype}|{dev}|-|{level} (-)|{info}|OFFLINE|RED")
         continue
 
     sz = fmt_size(md)
@@ -263,13 +262,6 @@ for md, vtype, level, info in specs:
         active = max(0, raid_disks - degraded)
     except Exception:
         raid_disks, degraded, action, active = 0, 0, "idle", 0
-
-    if md == "md2":
-        bm_path = f"{md_dir}/bitmap/location"
-        has_bm = os.path.exists(bm_path) and open(bm_path).read().strip() != "none"
-        row_info = "Bitmap:Internal" if has_bm else "Bitmap:None"
-    else:
-        row_info = info
 
     has_spare = any(
         "spare" in open(os.path.join(md_dir, d, "state")).read()
@@ -288,7 +280,7 @@ for md, vtype, level, info in specs:
         st, col = "ONLINE", "GREEN"
 
     arr_lbl = f"{level} ({active}/{raid_disks})"
-    print(f"{vtype}|{dev}|{sz}|{arr_lbl}|{row_info}|{st}|{col}")
+    print(f"{vtype}|{dev}|{sz}|{arr_lbl}|{info}|{st}|{col}")
 EOF
 )
 
