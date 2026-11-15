@@ -866,12 +866,13 @@ def main():
                     last_smart_alert = False
                     last_applied_state = None
                     last_ui_update = 0
-                    try:
-                        micon = libmicon.micon_api(MICON_PORT)
-                        micon.cmd_sound(libmicon.BZ_BUTTON)
-                        micon.port.close()
-                    except Exception:
-                        pass
+                    if current_state == STATE_HEALTHY:
+                        try:
+                            micon = libmicon.micon_api(MICON_PORT)
+                            micon.cmd_sound(libmicon.BZ_BUTTON)
+                            micon.port.close()
+                        except Exception:
+                            pass
 
         if clear_alert_confirm_active:
             rem = int(clear_alert_confirm_expire - now + 0.9)
@@ -890,12 +891,13 @@ def main():
                 clear_alert_confirm_active = False
                 last_applied_state = None
                 last_ui_update = 0
-                try:
-                    micon = libmicon.micon_api(MICON_PORT)
-                    micon.cmd_sound(libmicon.BZ_BUTTON)
-                    micon.port.close()
-                except Exception:
-                    pass
+                if current_state == STATE_HEALTHY:
+                    try:
+                        micon = libmicon.micon_api(MICON_PORT)
+                        micon.cmd_sound(libmicon.BZ_BUTTON)
+                        micon.port.close()
+                    except Exception:
+                        pass
 
         # ----------------------------------------------------------------------
         # Normal Periodic Storage & UI Health Monitoring
