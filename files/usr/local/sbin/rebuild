@@ -114,6 +114,72 @@ wipe_and_clone_gpt() {
     return 0
 }
 
+REBUILD_FLAG=""
+SPINNER_PID=""
+STEP_PREFIX=""
+
+stop_spinner() {
+    if [ -n "$SPINNER_PID" ]; then
+        kill "$SPINNER_PID" >/dev/null 2>&1 || true
+        wait "$SPINNER_PID" >/dev/null 2>&1 || true
+        SPINNER_PID=""
+    fi
+}
+
+cleanup_rebuild() {
+    stop_spinner
+    if [ -n "$REBUILD_FLAG" ]; then
+        rm -f "$REBUILD_FLAG"
+    fi
+}
+trap cleanup_rebuild EXIT INT TERM
+
+step_start() {
+    local msg="$1"
+    local pad=$((69 - ${#msg}))
+    [ "$pad" -lt 3 ] && pad=3
+    local dots
+    dots=$(printf '%*s' "$pad" '' | tr ' ' '.')
+    STEP_PREFIX="${msg} ${dots} "
+
+    stop_spinner
+    if [ -t 1 ]; then
+        printf "\r%s[${CYAN}.   ${NC}]" "$STEP_PREFIX"
+        (
+            local frames=('.   ' '..  ' ' .. ' '  ..' '   .' '  ..' ' .. ' '..  ')
+            local i=0
+            while true; do
+                printf "\r%s[${CYAN}%s${NC}]" "$STEP_PREFIX" "${frames[$i]}"
+                i=$(( (i + 1) % 8 ))
+                sleep 0.12
+            done
+        ) &
+        SPINNER_PID=$!
+    else
+        printf "%s" "$STEP_PREFIX"
+    fi
+}
+
+step_ok() {
+    stop_spinner
+    if [ -t 1 ]; then
+        printf "\r%s[ ${GREEN}OK${NC} ]\n" "$STEP_PREFIX"
+    else
+        echo -e "[ ${GREEN}OK${NC} ]"
+    fi
+}
+
+step_fail() {
+    stop_spinner
+    if [ -t 1 ]; then
+        printf "\r%s[${RED}FAIL${NC}]\n" "$STEP_PREFIX"
+    else
+        echo -e "[${RED}FAIL${NC}]"
+    fi
+    [ -n "${1:-}" ] && echo -e "${RED}  $1${NC}"
+    exit 1
+}
+
 init_storage() {
     echo -e "${RED}================================================================================${NC}"
     echo -e "${BOLD}      WARNING: COMPLETE RAID-5 & iSCSI VOLUME (/dev/md2) INITIALIZATION         ${NC}"
@@ -140,7 +206,7 @@ init_storage() {
     fi
 
     echo ""
-    echo -e "${CYAN}[1/5] Verifying physical presence of all 8 disks...${NC}"
+    step_start "[1/5] Physical presence of all 8 disks"
     local md2_parts=()
     local missing_disks=()
     local donor_disk=""
@@ -165,18 +231,14 @@ init_storage() {
     done
 
     if [ ${#missing_disks[@]} -gt 0 ]; then
-        echo -e "${RED}[CRITICAL ERROR] The following slots are empty: ${missing_disks[*]}${NC}"
-        echo -e "All 8 disks must be inserted before running --init-storage."
-        exit 1
+        step_fail "Empty slots: ${missing_disks[*]}. All 8 disks must be inserted first."
     fi
-    echo -e "${GREEN}  -> [OK] All 8 disks are present in their slots.${NC}"
-
     if [ -z "$donor_disk" ]; then
-        echo -e "${RED}[CRITICAL ERROR] No disk with valid partition table found to use as template!${NC}"
-        exit 1
+        step_fail "No disk with valid partition table found to use as template!"
     fi
+    step_ok
 
-    echo -e "\n${CYAN}[2/5] Checking partitions, Debian mirror and bootloader on all 8 disks...${NC}"
+    step_start "[2/5] Partitions, OS mirrors (md0/md1) and GRUB (8 disks)"
     for p in "${sorted_bays[@]}"; do
         local dev_name
         dev_name=$(basename "$(readlink -f "/dev/disk/by-path/$p")")
@@ -185,10 +247,8 @@ init_storage() {
         if [ ! -b "${dev_path}1" ] || [ ! -b "${dev_path}2" ] || [ ! -b "${dev_path}3" ] || [ ! -b "${dev_path}4" ] || \
            ! grep -q -E "(^|[[:space:]])${dev_name}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_init" || \
            ! grep -q -E "(^|[[:space:]])${dev_name}3\[[0-9]+\]([[:space:]]|$)" <<< "$mdstat_init"; then
-            echo -e "  Cloning partition table to $dev_path (template: $donor_disk)..."
             if ! wipe_and_clone_gpt "$dev_path" "$donor_disk"; then
-                echo -e "${RED}[CRITICAL ERROR] Failed to clone partitions to $dev_path!${NC}"
-                exit 1
+                step_fail "Failed to clone partitions to $dev_path!"
             fi
         fi
 
@@ -208,10 +268,10 @@ init_storage() {
     if [ "$(cat /sys/block/md1/md/sync_action 2>/dev/null)" == "resync" ]; then
         echo idle > /sys/block/md1/md/sync_action 2>/dev/null || true
     fi
-    echo -e "${GREEN}  -> [OK] Debian Operating System mirror and GRUB bootloader verified on all disks.${NC}"
+    step_ok
 
-    echo -e "\n${CYAN}[3/5] Stopping iSCSI target and wiping partition 4 RAID metadata...${NC}"
-    systemctl stop rtslib-fb-targetctl 2>/dev/null || true
+    step_start "[3/5] Stop iSCSI target & wipe partition 4 RAID metadata"
+    systemctl stop rtslib-fb-targetctl >/dev/null 2>&1 || true
     mdadm --stop "$ARRAY_DEV" >/dev/null 2>&1 || true
     udevadm settle
     local part4
@@ -219,31 +279,29 @@ init_storage() {
         mdadm --zero-superblock "$part4" >/dev/null 2>&1 || true
         wipefs -a "$part4" >/dev/null 2>&1 || true
     done
-    echo -e "${GREEN}  -> [OK] Storage array stopped and partition 4 metadata cleared.${NC}"
+    step_ok
 
-    echo -e "\n${CYAN}[4/5] Recreating RAID-5 array '$ARRAY_DEV' (8 disks, bitmap=internal)...${NC}"
-    if ! mdadm --create "$ARRAY_DEV" --run --level=5 --raid-devices="${#md2_parts[@]}" --chunk=512K --bitmap=internal --metadata=1.2 "${md2_parts[@]}"; then
-        echo -e "${RED}[CRITICAL ERROR] Failed to create RAID-5 array '$ARRAY_DEV'!${NC}"
-        exit 1
+    step_start "[4/5] Recreate RAID-5 (${ARRAY_DEV}, bitmap=internal) & initramfs"
+    local md2_create_err=""
+    if ! md2_create_err=$(mdadm --create "$ARRAY_DEV" --run --level=5 --raid-devices="${#md2_parts[@]}" --chunk=512K --bitmap=internal --metadata=1.2 "${md2_parts[@]}" 2>&1); then
+        step_fail "Failed to create RAID-5 array '$ARRAY_DEV': $md2_create_err"
     fi
     udevadm settle
     sleep 2
     if [ ! -b "$ARRAY_DEV" ]; then
-        echo -e "${RED}[CRITICAL ERROR] Array block device $ARRAY_DEV did not appear!${NC}"
-        exit 1
+        step_fail "Array block device $ARRAY_DEV did not appear!"
     fi
     echo 2048 > /sys/block/md2/md/stripe_cache_size 2>/dev/null || true
     sed -i '/^ARRAY[[:space:]]\+\/dev\/md\/\?2/d' /etc/mdadm/mdadm.conf
     mdadm --detail --scan "$ARRAY_DEV" >> /etc/mdadm/mdadm.conf
     update-initramfs -u >/dev/null 2>&1 || true
-    echo -e "${GREEN}  -> [OK] RAID-5 array '$ARRAY_DEV' created and mdadm.conf updated.${NC}"
+    step_ok
 
-    echo -e "\n${CYAN}[5/5] Reactivating iSCSI storage target service (LIO)...${NC}"
-    if ! systemctl restart rtslib-fb-targetctl; then
-        echo -e "${RED}[CRITICAL ERROR] Failed to restart rtslib-fb-targetctl!${NC}"
-        exit 1
+    step_start "[5/5] iSCSI storage target service (LIO -> ${ARRAY_DEV})"
+    if ! systemctl restart rtslib-fb-targetctl >/dev/null 2>&1; then
+        step_fail "Failed to restart rtslib-fb-targetctl!"
     fi
-    echo -e "${GREEN}  -> [OK] iSCSI target online and pointing to $ARRAY_DEV.${NC}"
+    step_ok
 
     echo -e "\n${CYAN}================================================================================${NC}"
     echo -e "${GREEN}${BOLD}     STORAGE INITIALIZED SUCCESSFULLY! NEW RAID-5 VOLUME READY                 ${NC}"
@@ -419,68 +477,6 @@ REBUILD_FLAG="/run/terastation_rebuild_in_progress"
 echo "${TARGET_DISK#Disk }" > "$REBUILD_FLAG"
 
 echo ""
-SPINNER_PID=""
-STEP_PREFIX=""
-
-stop_spinner() {
-    if [ -n "$SPINNER_PID" ]; then
-        kill "$SPINNER_PID" >/dev/null 2>&1 || true
-        wait "$SPINNER_PID" >/dev/null 2>&1 || true
-        SPINNER_PID=""
-    fi
-}
-
-cleanup_rebuild() {
-    stop_spinner
-    rm -f "$REBUILD_FLAG"
-}
-trap cleanup_rebuild EXIT INT TERM
-
-step_start() {
-    local msg="$1"
-    local pad=$((69 - ${#msg}))
-    [ "$pad" -lt 3 ] && pad=3
-    local dots
-    dots=$(printf '%*s' "$pad" '' | tr ' ' '.')
-    STEP_PREFIX="${msg} ${dots} "
-
-    stop_spinner
-    if [ -t 1 ]; then
-        printf "\r%s[${CYAN}.   ${NC}]" "$STEP_PREFIX"
-        (
-            local frames=('.   ' '..  ' ' .. ' '  ..' '   .' '  ..' ' .. ' '..  ')
-            local i=0
-            while true; do
-                printf "\r%s[${CYAN}%s${NC}]" "$STEP_PREFIX" "${frames[$i]}"
-                i=$(( (i + 1) % 8 ))
-                sleep 0.12
-            done
-        ) &
-        SPINNER_PID=$!
-    else
-        printf "%s" "$STEP_PREFIX"
-    fi
-}
-
-step_ok() {
-    stop_spinner
-    if [ -t 1 ]; then
-        printf "\r%s[ ${GREEN}OK${NC} ]\n" "$STEP_PREFIX"
-    else
-        echo -e "[ ${GREEN}OK${NC} ]"
-    fi
-}
-
-step_fail() {
-    stop_spinner
-    if [ -t 1 ]; then
-        printf "\r%s[${RED}FAIL${NC}]\n" "$STEP_PREFIX"
-    else
-        echo -e "[${RED}FAIL${NC}]"
-    fi
-    [ -n "${1:-}" ] && echo -e "${RED}  $1${NC}"
-    exit 1
-}
 
 # ------------------------------------------------------------------------------
 # Step 1: Wipe residual metadata and clone GPT partition table
