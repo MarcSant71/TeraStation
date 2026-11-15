@@ -14,6 +14,7 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # ANSI Colors
 RED='\033[1;31m'
+BLINK_RED='\033[1;5;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[1;36m'
@@ -184,19 +185,19 @@ init_storage() {
     if [ -t 1 ]; then
         clear
     fi
-    echo -e "${RED}${BOLD}                       WARNING: COMPLETE RAID DATA ERASE${NC}"
+    echo -e "                      ${RED}WARNING: ${BLINK_RED}COMPLETE RAID DATA ERASE${NC}"
     echo ""
-    echo -e "${RED}-------------------------------[ READ CAREFULLY ]-------------------------------${NC}"
+    echo -e "${RED}------------------------------[ READ CAREFULLY ]------------------------------${NC}"
     echo -e "This procedure is intended for ${BOLD}DISASTER RECOVERY${NC} (loss of 2+ disks),"
     echo -e "where RAID-5 (/dev/md2) was lost and replacement disks have been inserted."
-    echo -e "${YELLOW}-------------------------[ WHAT THIS PROCEDURE WILL DO ]--------------------------${NC}"
+    echo -e "${YELLOW}-----------------------[ WHAT THIS PROCEDURE WILL DO ]------------------------${NC}"
     echo -e "  1. Verify physical presence of all 8 disks in the slots."
     echo -e "  2. Partition new/raw disks and align GPT partitions."
     echo -e "  3. Synchronize Debian RAID (md0 and md1) across all 8 disks."
     echo -e "  4. Recreate RAID-5 storage array '$ARRAY_DEV' (8 disks, bitmap=internal)."
     echo -e "  5. Update /etc/mdadm/mdadm.conf, initramfs and GRUB bootloader (all 8 disks)."
     echo -e "  6. Restart kernel iSCSI target service (LIO)."
-    echo -e "${RED}-----------------------------------[ DANGER ]-----------------------------------${NC}"
+    echo -e "${RED}----------------------------------[ DANGER ]----------------------------------${NC}"
     echo -e "All data on $ARRAY_DEV will be ${BOLD}PERMANENTLY ERASED${NC}. This action ${BOLD}CANNOT BE UNDONE${NC}."
     echo -e "To confirm, type ${BOLD}INITIALIZE${NC} (in uppercase):"
     read -p "Confirmation: " CONFIRM_INIT
