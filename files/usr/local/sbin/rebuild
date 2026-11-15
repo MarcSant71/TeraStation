@@ -186,7 +186,7 @@ init_storage() {
     fi
     echo -e "${RED}${BOLD}                       WARNING: COMPLETE RAID DATA ERASE${NC}"
     echo ""
-    echo -e "${RED}------------------------------[ LEIA COM ATENÇÃO ]------------------------------${NC}"
+    echo -e "${RED}-------------------------------[ READ CAREFULLY ]-------------------------------${NC}"
     echo -e "This procedure is intended for ${BOLD}DISASTER RECOVERY${NC} (loss of 2+ disks),"
     echo -e "where RAID-5 (/dev/md2) was lost and replacement disks have been inserted."
     echo -e "${YELLOW}-------------------------[ WHAT THIS PROCEDURE WILL DO ]--------------------------${NC}"
