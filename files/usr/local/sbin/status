@@ -370,8 +370,10 @@ else
     echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized across md0, md1, and md2.${NC}"
 fi
 if [ "$_alert_printed" -eq 0 ] && [ "$ALERT_COUNT" -eq 1 ]; then
+    echo -e "------------------------------------------------------------------------------"
     echo -e "${YELLOW}${BOLD}ALERT : ${ALERT_FIRST_MSG}.${NC}"
 elif [ "$_alert_printed" -eq 0 ] && [ "$ALERT_COUNT" -gt 1 ]; then
+    echo -e "------------------------------------------------------------------------------"
     _alert_list=$(IFS=", "; echo "${ALERT_DISKS[*]}")
     echo -e "${YELLOW}${BOLD}ALERT : SMART on ${_alert_list} (check: journalctl -u smartmontools).${NC}"
 fi
