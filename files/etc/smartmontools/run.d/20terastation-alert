@@ -2,7 +2,7 @@
 # TeraStation TS5800D - smartd alert hook
 # Records SMART alert reason keyed by drive serial (for `status`) and sounds buzzer.
 
-ALERT_DIR="/var/lib/smartmontools/terastation_alerts"
+ALERT_DIR="/var/lib/smartmontools/alerts"
 mkdir -p "$ALERT_DIR" 2>/dev/null || true
 
 dev="${SMARTD_DEVICE:-}"

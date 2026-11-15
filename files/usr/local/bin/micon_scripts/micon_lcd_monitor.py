@@ -463,7 +463,7 @@ def compute_sata_led_masks(pool_name="storage"):
     return bytearray([red_on, green_on]), bytearray([red_blink, green_blink])
 
 
-SMART_ALERT_DIR = "/var/lib/smartmontools/terastation_alerts"
+SMART_ALERT_DIR = "/var/lib/smartmontools/alerts"
 
 
 def has_active_smart_alert():
@@ -648,6 +648,69 @@ class PowerButtonMonitor:
         self.fds = []
 
 
+class FunctionButtonMonitor:
+    """Monitors the front-panel FUNCTION button via gpio_it87 (it87_gp34, offset 20)."""
+
+    def __init__(self):
+        self.val_path = None
+        self.last_val = "1"
+        self.last_press_time = 0.0
+        self._init_gpio()
+
+    def _init_gpio(self):
+        try:
+            gpio_base = None
+            for entry in os.listdir("/sys/class/gpio"):
+                if entry.startswith("gpiochip"):
+                    lbl_path = f"/sys/class/gpio/{entry}/label"
+                    if os.path.exists(lbl_path) and open(lbl_path).read().strip() == "gpio_it87":
+                        gpio_base = int(open(f"/sys/class/gpio/{entry}/base").read().strip())
+                        break
+            if gpio_base is None:
+                return
+            gpio_num = gpio_base + 20
+            candidates = [f"/sys/class/gpio/it87_gp34", f"/sys/class/gpio/gpio{gpio_num}"]
+            gpio_dir = next((c for c in candidates if os.path.isdir(c)), None)
+            if not gpio_dir:
+                try:
+                    with open("/sys/class/gpio/export", "w") as f:
+                        f.write(str(gpio_num))
+                except Exception:
+                    pass
+                gpio_dir = next((c for c in candidates if os.path.isdir(c)), None)
+            if not gpio_dir:
+                return
+            dir_path = f"{gpio_dir}/direction"
+            if os.path.exists(dir_path):
+                try:
+                    if open(dir_path).read().strip() != "in":
+                        open(dir_path, "w").write("in")
+                except Exception:
+                    pass
+            val_path = f"{gpio_dir}/value"
+            if os.path.exists(val_path):
+                self.val_path = val_path
+                self.last_val = open(val_path).read().strip()
+        except Exception:
+            self.val_path = None
+
+    def poll_press(self):
+        if not self.val_path:
+            return False
+        try:
+            val = open(self.val_path).read().strip()
+            pressed = (self.last_val == "1" and val == "0")
+            self.last_val = val
+            if pressed:
+                now = time.time()
+                if now - self.last_press_time >= 0.35:
+                    self.last_press_time = now
+                    return True
+        except Exception:
+            pass
+        return False
+
+
 def main():
     global shutdown_triggered
 
@@ -668,6 +731,7 @@ def main():
     signal.signal(signal.SIGINT, sig_shutdown_handler)
 
     btn_monitor = PowerButtonMonitor()
+    fn_monitor = FunctionButtonMonitor()
 
     last_health_check = 0
     current_state = STATE_HEALTHY
@@ -686,6 +750,10 @@ def main():
 
     shutdown_confirm_active = False
     shutdown_confirm_expire = 0.0
+    clear_alert_confirm_active = False
+    clear_alert_confirm_expire = 0.0
+    clear_alert_first_press = 0.0
+    clear_alert_last_sec = -1
     first_press_time = 0.0
     last_countdown_sec = -1
     last_ui_update = 0
@@ -757,6 +825,71 @@ def main():
                 # Expired: Cancel confirmation and restore previous display state
                 shutdown_confirm_active = False
                 last_applied_state = None  # Forces re-applying normal state
+                try:
+                    micon = libmicon.micon_api(MICON_PORT)
+                    micon.cmd_sound(libmicon.BZ_BUTTON)
+                    micon.port.close()
+                except Exception:
+                    pass
+
+        # ----------------------------------------------------------------------
+        # FUNCTION Button Double-Press Detection (Clear SMART Alerts)
+        # ----------------------------------------------------------------------
+        if not shutdown_confirm_active and fn_monitor.poll_press():
+            if not clear_alert_confirm_active:
+                if has_active_smart_alert():
+                    clear_alert_first_press = now
+                    clear_alert_confirm_active = True
+                    clear_alert_confirm_expire = now + 6.0
+                    clear_alert_last_sec = -1
+                    try:
+                        micon = libmicon.micon_api(MICON_PORT)
+                        micon.cmd_sound(libmicon.BZ_BUTTON)
+                        micon.send_write_cmd(1, libmicon.lcd_set_dispitem, 0x60)
+                        micon.send_write_cmd(0, libmicon.lcd_changemode_button)
+                        micon.cmd_force_lcd_disp(libmicon.lcd_disp_buffer0)
+                        micon.set_lcd_buffer(libmicon.lcd_set_buffer0, " CLEAR ALERTS?  ", "Press Again [6s]")
+                        micon.port.close()
+                    except Exception as e:
+                        sys.stderr.write(f"Function button press 1 error: {e}\n")
+            else:
+                if now - clear_alert_first_press >= 0.4:
+                    clear_alert_confirm_active = False
+                    try:
+                        if os.path.isdir(SMART_ALERT_DIR):
+                            for fn in os.listdir(SMART_ALERT_DIR):
+                                fp = os.path.join(SMART_ALERT_DIR, fn)
+                                if os.path.isfile(fp):
+                                    os.remove(fp)
+                    except Exception as e:
+                        sys.stderr.write(f"Clear alerts error: {e}\n")
+                    last_smart_alert = False
+                    last_applied_state = None
+                    last_ui_update = 0
+                    try:
+                        micon = libmicon.micon_api(MICON_PORT)
+                        micon.cmd_sound(libmicon.BZ_BUTTON)
+                        micon.port.close()
+                    except Exception:
+                        pass
+
+        if clear_alert_confirm_active:
+            rem = int(clear_alert_confirm_expire - now + 0.9)
+            if rem > 0:
+                if rem != clear_alert_last_sec:
+                    clear_alert_last_sec = rem
+                    try:
+                        micon = libmicon.micon_api(MICON_PORT)
+                        micon.set_lcd_buffer(libmicon.lcd_set_buffer0, " CLEAR ALERTS?  ", f"Press Again [{rem}s]")
+                        micon.port.close()
+                    except Exception:
+                        pass
+                time.sleep(0.15)
+                continue
+            else:
+                clear_alert_confirm_active = False
+                last_applied_state = None
+                last_ui_update = 0
                 try:
                     micon = libmicon.micon_api(MICON_PORT)
                     micon.cmd_sound(libmicon.BZ_BUTTON)

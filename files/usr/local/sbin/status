@@ -73,7 +73,7 @@ EMPTY_DISKS=()
 ALERT_COUNT=0
 ALERT_DISKS=()
 ALERT_FIRST_MSG=""
-SMART_ALERT_DIR="/var/lib/smartmontools/terastation_alerts"
+SMART_ALERT_DIR="/var/lib/smartmontools/alerts"
 
 read -r REBUILD_STAGE REBUILD_PCT <<< "$(python3 - << 'EOF'
 import re
