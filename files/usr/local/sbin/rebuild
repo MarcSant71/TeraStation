@@ -78,6 +78,10 @@ wipe_and_clone_gpt() {
     local source_dev="$2"
     local part pnum
 
+    for md_dev in /dev/md0 /dev/md1 /dev/md2; do
+        mdadm --manage "$md_dev" --remove detached >/dev/null 2>&1 || true
+    done
+
     for part in "${target_dev}"[0-9]*; do
         if [ -b "$part" ]; then
             for md_dev in /dev/md0 /dev/md1 /dev/md2; do
