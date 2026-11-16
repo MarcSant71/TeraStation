@@ -94,6 +94,13 @@ if [ -f "${FILES_DIR}/etc/sysctl.d/99-iscsi-tuning.conf" ]; then
     sysctl --system >/dev/null 2>&1 || true
 fi
 
+# Agendamento mensal do checkarray para 00:00 do 1o domingo do mes
+if [ -f "${FILES_DIR}/etc/cron.d/mdadm" ]; then
+    mkdir -p /etc/cron.d
+    cp -a "${FILES_DIR}/etc/cron.d/mdadm" /etc/cron.d/mdadm
+    chmod 644 /etc/cron.d/mdadm
+fi
+
 # Remove legados ZFS caso presentes
 rm -f /etc/modprobe.d/zfs.conf /etc/cron.d/zfsutils-linux
 
