@@ -16,9 +16,7 @@ Emulates authentic Buffalo TeraStation firmware front panel behavior:
    - Backlight: Solid ORANGE (blinking stops).
    - Front LEDs: INFO=ON, ERROR=OFF.
    - Drive Tray LEDs: Rebuilding bay blinks Green; healthy bays remain Green Solid.
-   - Screen: LOCKED on Rebuild Progress ("REBUILDING...   " / "PROGRESS: XX%").
-     * Pressing DISPLAY shows IP/Clock.
-     * Automatically returns to Rebuild progress after 15s timeout.
+   - Carousel: Cycles automatically every 5s between Rebuild/Check Progress and IP/Clock.
    - Silent: No buzzer alarm.
 
 3. ORANGE + BLINKING ERROR LED (CRITICAL ALERT):
@@ -986,8 +984,7 @@ def main():
 
                     if last_applied_state != STATE_REBUILDING:
                         micon.send_write_cmd(1, libmicon.lcd_set_dispitem, 0x60)  # enable buffer0 + buffer1
-                        micon.send_write_cmd(0, libmicon.lcd_changemode_button)   # manual mode (locked to button)
-                        micon.cmd_force_lcd_disp(libmicon.lcd_disp_buffer0)       # lock on Buffer 0
+                        micon.send_write_cmd(0, libmicon.lcd_changemode_auto)      # auto rotate every 5s
                         micon.set_lcd_brightness(libmicon.LCD_BRIGHT_FULL)
 
                         # Solid Orange LCD Backlight, INFO_LED BLINKING, ERROR_LED OFF
@@ -998,13 +995,7 @@ def main():
                         # Notification beep on entering Rebuild or Maintenance Scrub
                         micon.cmd_sound(libmicon.BZ_BUTTON)
 
-                        last_force_buffer0 = now
                         last_applied_state = STATE_REBUILDING
-
-                    # Re-force Buffer 0 every 15 seconds if DISPLAY was pressed
-                    if now - last_force_buffer0 >= 15:
-                        micon.cmd_force_lcd_disp(libmicon.lcd_disp_buffer0)
-                        last_force_buffer0 = now
 
                 else:
                     # --------------------------------------------------------------
