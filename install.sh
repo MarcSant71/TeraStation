@@ -79,10 +79,19 @@ mkdir -p /etc/sensors.d /etc/udev/rules.d
 cp -a "${FILES_DIR}/etc/modules" /etc/modules
 cp -a "${FILES_DIR}/etc/sensors.d/it8721.conf" /etc/sensors.d/it8721.conf
 
-# Ajuste de cache de stripe para md2 (RAID5)
+# Ajuste de cache de stripe e fila para md2 (RAID5)
 if [ -f "${FILES_DIR}/etc/udev/rules.d/99-md-tuning.rules" ]; then
     cp -a "${FILES_DIR}/etc/udev/rules.d/99-md-tuning.rules" /etc/udev/rules.d/99-md-tuning.rules
     chmod 644 /etc/udev/rules.d/99-md-tuning.rules
+    udevadm control --reload-rules 2>/dev/null || true
+fi
+
+# Ajuste de buffers TCP do kernel para iSCSI
+if [ -f "${FILES_DIR}/etc/sysctl.d/99-iscsi-tuning.conf" ]; then
+    mkdir -p /etc/sysctl.d
+    cp -a "${FILES_DIR}/etc/sysctl.d/99-iscsi-tuning.conf" /etc/sysctl.d/99-iscsi-tuning.conf
+    chmod 644 /etc/sysctl.d/99-iscsi-tuning.conf
+    sysctl --system >/dev/null 2>&1 || true
 fi
 
 # Remove legados ZFS caso presentes

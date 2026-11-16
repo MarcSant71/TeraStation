@@ -1,4 +1,5 @@
-# Increase RAID5 stripe cache (~256 MiB) and enable 2 XOR worker threads for /dev/md2
-ACTION=="add|change", KERNEL=="md2", ATTR{md/stripe_cache_size}="8192", ATTR{md/group_thread_cnt}="2"
+# Increase RAID5 stripe cache (~512 MiB), 2 XOR worker threads, and 14 MiB read-ahead for /dev/md2
+ACTION=="add|change", KERNEL=="md2", TEST=="md/stripe_cache_size", ATTR{md/stripe_cache_size}="16384", ATTR{md/group_thread_cnt}="2"
+ACTION=="add|change", KERNEL=="md2", TEST=="queue/read_ahead_kb", ATTR{queue/read_ahead_kb}="14336"
 # Automatically switch degraded arrays with a rebuilding spare out of read-auto on boot
 ACTION=="add|change", KERNEL=="md[0-9]*", ATTR{md/array_state}=="read-auto", ATTR{md/degraded}!="0", RUN+="/bin/sh -c 'grep -q spare /sys/block/%k/md/dev-*/state 2>/dev/null && /sbin/mdadm --readwrite /dev/%k || true'"
