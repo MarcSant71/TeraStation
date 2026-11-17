@@ -384,7 +384,7 @@ elif [ "$ALERT_COUNT" -gt 1 ]; then
     echo -e "${YELLOW}${BOLD}STATUS: SMART alert on ${_alert_list} (check: journalctl -u smartmontools).${NC}"
     _alert_printed=1
 else
-    echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy and synchronized across md0, md1, and md2.${NC}"
+    echo -e "${GREEN}${BOLD}STATUS: All 8 disks are 100% healthy.${NC}"
 fi
 if [ "$_alert_printed" -eq 0 ] && [ "$ALERT_COUNT" -eq 1 ]; then
     echo -e "${YELLOW}${BOLD}ALERT : ${ALERT_FIRST_MSG}.${NC}"
