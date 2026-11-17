@@ -61,16 +61,15 @@ def send_telegram(token: str, chat_id: str, text: str) -> None:
 
 def format_message(args: list[str]) -> str:
     """Format CLI arguments (manual message or mdadm PROGRAM args)."""
-    host = socket.gethostname()
     if not args:
-        return f"[{host}] Alert triggered (no details)"
+        return "Alert triggered (no details)"
     if args[0] in MDADM_EVENTS:
         event = args[0]
         array = args[1] if len(args) > 1 else ""
         device = args[2] if len(args) > 2 else ""
         details = " ".join(p for p in (array, device) if p)
-        return f"[{host}] RAID {event}: {details}".strip()
-    return f"[{host}] {' '.join(args)}"
+        return f"RAID {event}: {details}".strip()
+    return " ".join(args)
 
 
 def main() -> int:
