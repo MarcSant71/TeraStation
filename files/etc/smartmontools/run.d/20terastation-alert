@@ -12,5 +12,8 @@ if [ -n "$dev" ] && [ -b "$dev" ]; then
     reason="${SMARTD_FAILTYPE:-SMART}: ${SMARTD_MESSAGE:-Check journalctl -u smartmontools}"
     reason=$(printf '%s' "$reason" | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
     printf '%s (%s)\n' "$reason" "$(date '+%Y-%m-%d %H:%M')" > "${ALERT_DIR}/${key}" 2>/dev/null || true
+    if [ -x /usr/local/bin/nas-notify ]; then
+        /usr/local/bin/nas-notify "SMART Alert (${key}): ${reason}" >/dev/null 2>&1 || true
+    fi
 fi
 exit 0

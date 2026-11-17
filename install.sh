@@ -64,7 +64,7 @@ mkdir -p /lib/systemd/system-shutdown
 ln -sf /usr/local/bin/micon_scripts/micon_shutdown.py /lib/systemd/system-shutdown/micon_shutdown
 
 # Outros binarios de apoio
-for f in micro-evtd hotswap_enable.sh button_example.sh drive_detect_example.sh early_cmds.sh gpio_input_examples.sh in_target.sh late_cmds.sh update_boot.sh; do
+for f in nas-notify micro-evtd hotswap_enable.sh button_example.sh drive_detect_example.sh early_cmds.sh gpio_input_examples.sh in_target.sh late_cmds.sh update_boot.sh; do
     if [ -f "${FILES_DIR}/usr/local/bin/$f" ]; then
         cp -a "${FILES_DIR}/usr/local/bin/$f" "/usr/local/bin/$f"
         chmod 755 "/usr/local/bin/$f"
@@ -106,6 +106,11 @@ if [ -f "${FILES_DIR}/etc/cron.d/mdadm" ]; then
     mkdir -p /etc/cron.d
     cp -a "${FILES_DIR}/etc/cron.d/mdadm" /etc/cron.d/mdadm
     chmod 644 /etc/cron.d/mdadm
+fi
+
+# Gancho de alertas RAID do mdadm --monitor -> nas-notify
+if [ -f /etc/mdadm/mdadm.conf ] && ! grep -q "^PROGRAM " /etc/mdadm/mdadm.conf; then
+    echo "PROGRAM /usr/local/bin/nas-notify" >> /etc/mdadm/mdadm.conf
 fi
 
 # Remove legados ZFS caso presentes
