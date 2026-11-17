@@ -56,11 +56,11 @@
         "unmap_zeroes_data": 0
       },
       "dev": "/dev/md2",
-      "name": "lun0",
+      "name": "Storage",
       "plugin": "fileio",
       "size": 20785231036416,
       "write_back": true,
-      "wwn": "34a20fe6-43e0-44d3-96f7-50151c7afb90"
+      "wwn": "c884d0fd-849e-4cbb-aa15-7b916813c0c1"
     }
   ],
   "targets": [
@@ -90,10 +90,10 @@
           "enable": true,
           "luns": [
             {
-              "alias": "841886eed2",
+              "alias": "7ca3732724",
               "alua_tg_pt_gp_name": "default_tg_pt_gp",
               "index": 0,
-              "storage_object": "/backstores/fileio/lun0"
+              "storage_object": "/backstores/fileio/Storage"
             }
           ],
           "node_acls": [
@@ -111,7 +111,7 @@
               },
               "mapped_luns": [
                 {
-                  "alias": "8224792cd0",
+                  "alias": "401b8346f6",
                   "index": 0,
                   "tpg_lun": 0,
                   "write_protect": false
