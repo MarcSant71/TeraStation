@@ -94,6 +94,13 @@ if [ -f "${FILES_DIR}/etc/sysctl.d/99-iscsi-tuning.conf" ]; then
     sysctl --system >/dev/null 2>&1 || true
 fi
 
+# Configuracao de rede (bond0 + MTU 9000)
+if [ -f "${FILES_DIR}/etc/network/interfaces" ]; then
+    mkdir -p /etc/network
+    cp -a "${FILES_DIR}/etc/network/interfaces" /etc/network/interfaces
+    chmod 644 /etc/network/interfaces
+fi
+
 # Agendamento mensal do checkarray para 00:00 do 1o domingo do mes
 if [ -f "${FILES_DIR}/etc/cron.d/mdadm" ]; then
     mkdir -p /etc/cron.d
