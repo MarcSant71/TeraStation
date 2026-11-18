@@ -66,6 +66,19 @@ def is_mdadm_event(arg: str) -> bool:
     )
 
 
+def is_rebuilding(array_arg: str) -> bool:
+    """Return True if the target md array currently has an active recovery."""
+    md_name = array_arg.replace("/dev/md/", "/dev/md").rsplit("/", 1)[-1]
+    if not md_name.startswith("md"):
+        return False
+    sync_path = f"/sys/block/{md_name}/md/sync_action"
+    try:
+        with open(sync_path, "r", encoding="utf-8") as f:
+            return f.read().strip() == "recover"
+    except OSError:
+        return False
+
+
 def format_message(args: list[str]) -> str:
     """Format CLI arguments (manual message or mdadm PROGRAM args)."""
     if not args:
@@ -83,6 +96,10 @@ def main() -> int:
     token, chat_id = load_config(CONF_PATH)
     if not token or not chat_id:
         return 0
+    if len(sys.argv) > 1 and sys.argv[1] == "DegradedArray":
+        array_arg = sys.argv[2] if len(sys.argv) > 2 else ""
+        if is_rebuilding(array_arg):
+            return 0
     msg = format_message(sys.argv[1:])
     try:
         send_telegram(token, chat_id, msg)
