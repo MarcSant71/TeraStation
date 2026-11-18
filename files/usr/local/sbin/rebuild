@@ -523,6 +523,18 @@ step_ok
 # Step 5: Re-add Data partition to RAID-5 md2 and trigger Recovery
 # ------------------------------------------------------------------------------
 step_start "[5/5] Storage RAID-5 array (md2 <- ${TARGET_DEV}4)"
+# Wait for OS mirrors (md0 + md1) to finish before adding md2 so the kernel
+# does not schedule the 18.9 TB md2 rebuild ahead of the 4 GB md1 swap mirror.
+_wait_os=0
+while [ $_wait_os -lt 600 ]; do
+    _s0=$(cat /sys/block/md0/md/sync_action 2>/dev/null || echo "idle")
+    _s1=$(cat /sys/block/md1/md/sync_action 2>/dev/null || echo "idle")
+    if [ "$_s0" = "idle" ] && [ "$_s1" = "idle" ]; then
+        break
+    fi
+    sleep 2
+    _wait_os=$((_wait_os + 2))
+done
 MD2_ERR=""
 if ! MD2_ERR=$(mdadm --manage "$ARRAY_DEV" --add "${TARGET_DEV}4" 2>&1); then
     step_fail "mdadm --add failed on ${ARRAY_DEV}: $MD2_ERR"
