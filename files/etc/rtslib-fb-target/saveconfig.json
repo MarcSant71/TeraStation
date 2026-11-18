@@ -100,7 +100,7 @@
             {
               "attributes": {
                 "authentication": -1,
-                "dataout_timeout": 3,
+                "dataout_timeout": 15,
                 "dataout_timeout_retries": 5,
                 "default_erl": 0,
                 "nopin_response_timeout": 30,
