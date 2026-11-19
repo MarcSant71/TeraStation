@@ -296,7 +296,7 @@ init_storage() {
     echo 14336 > /sys/block/md2/queue/read_ahead_kb 2>/dev/null || true
     sysctl -w dev.raid.speed_limit_min=1000 dev.raid.speed_limit_max=500000 >/dev/null 2>&1 || true
     sed -i '/^ARRAY[[:space:]]\+\/dev\/md\/\?2/d' /etc/mdadm/mdadm.conf
-    mdadm --detail --scan "$ARRAY_DEV" >> /etc/mdadm/mdadm.conf
+    mdadm --detail --scan "$ARRAY_DEV" | sed -E 's/[[:space:]]+spares=[0-9]+//g' >> /etc/mdadm/mdadm.conf
     step_ok
 
     step_start "[5/6] Update initramfs and GRUB bootloader (all 8 disks)"
