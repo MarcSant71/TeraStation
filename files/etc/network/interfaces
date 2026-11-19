@@ -7,13 +7,13 @@ source /etc/network/interfaces.d/*
 auto lo
 iface lo inet loopback
 
-# Portas fisicas como escravas (sem IP proprio)
+# Physical NICs as bond slaves (no standalone IP)
 iface enp3s0 inet manual
     up /sbin/ip link set dev $IFACE mtu 9000
 iface enp4s0 inet manual
     up /sbin/ip link set dev $IFACE mtu 9000
 
-# Interface Agregada com DHCP
+# Aggregated bond0 interface with DHCP and Jumbo Frames (MTU 9000)
 auto bond0
 iface bond0 inet dhcp
     bond-slaves enp3s0 enp4s0
