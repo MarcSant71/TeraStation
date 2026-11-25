@@ -60,3 +60,4 @@ run_step "[3/3] Rotated archives and active .log files" clear_varlog
 echo "------------------------------------------------------------------------------"
 echo -e "${GREEN}STATUS: All logs cleared safely.${NC}"
 echo "------------------------------------------------------------------------------"
+echo ""

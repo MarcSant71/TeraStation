@@ -376,6 +376,7 @@ if [ $# -eq 0 ]; then
         echo "------------------------------------------------------------------------------"
         echo -e "To view current disk map and health diagnostics, run: ${GREEN}${BOLD}status${NC}"
         echo "------------------------------------------------------------------------------"
+        echo ""
         exit 0
     fi
 elif [ "$1" == "-h" ] || [ "$1" == "--help" ]; then

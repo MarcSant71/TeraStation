@@ -394,3 +394,4 @@ elif [ "$_alert_printed" -eq 0 ] && [ "$ALERT_COUNT" -gt 1 ]; then
 fi
 echo -e "------------------------------------------------------------------------------"
 echo -e "To replace a failed disk or view recovery options, run: ${GREEN}rebuild${NC}"
+echo ""
