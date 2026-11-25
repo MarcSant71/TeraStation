@@ -7,6 +7,28 @@
 set -o pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
+MODE="array"
+if [ "$#" -gt 0 ]; then
+    case "$1" in
+        -a) MODE="array" ;;
+        -d) MODE="disks" ;;
+        -h|--help)
+            echo "Usage: status [-a | -d]"
+            echo "  -a    Array and physical bay overview (default)"
+            echo "  -d    Detailed SMART disk health per bay"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1 (use: status [-a | -d])" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+if [ "$MODE" = "disks" ] && [ "$(id -u)" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
+
 # Clear terminal screen if interactive
 if [ -t 1 ]; then
     clear
@@ -51,6 +73,101 @@ all_bays=(
 
 # Dynamically slice bay list to match physical motherboard capacity
 sorted_bays=("${all_bays[@]:0:$TOTAL_BAYS}")
+
+if [ "$MODE" = "disks" ]; then
+    echo -e "${BOLD}            TeraStation TS5800D - Disk Health & SMART Diagnostics${NC}"
+    echo ""
+    echo -e "${CYAN}-------------------------------[ DISK HEALTH ]--------------------------------${NC}"
+    printf "%-7s %-9s %-15s %7s %7s %5s %6s %4s %s\n" "BAY" "DISK" "MODEL" "HOURS" "REALLOC" "PEND" "UNCORR" "TEMP" "STATUS"
+    echo -e "------------------------------------------------------------------------------"
+    python3 - "${sorted_bays[@]}" <<'PYEOF'
+import os, re, subprocess, sys
+
+RED, GREEN, YELLOW, NC = "\033[1;31m", "\033[1;32m", "\033[1;33m", "\033[0m"
+failed_bays, watch_bays = [], []
+
+def parse_smart(dev_path):
+    res = subprocess.run(["smartctl", "-x", dev_path], capture_output=True, text=True)
+    out = res.stdout or ""
+    health = "PASSED" if "overall-health self-assessment test result: PASSED" in out else "UNKNOWN"
+    if "overall-health self-assessment test result: FAILED" in out:
+        health = "FAILED"
+
+    def attr_raw(name):
+        m = re.search(rf"^\s*\d+\s+{name}\s+\S+\s+\d+\s+\d+\s+\d+\s+\S+\s+(\d+)", out, re.M)
+        return int(m.group(1)) if m else None
+
+    def gpl_val(label):
+        m = re.search(rf"^\s*0x[0-9a-f]+\s+0x[0-9a-f]+\s+\d+\s+(\d+)\s+\S+\s+{re.escape(label)}", out, re.M)
+        return int(m.group(1)) if m else None
+
+    hours = attr_raw("Power_On_Hours")
+    realloc = attr_raw("Reallocated_Sector_Ct")
+    if realloc is None:
+        realloc = gpl_val("Number of Reallocated Logical Sectors")
+    pend = attr_raw("Current_Pending_Sector")
+    if pend is None:
+        pend = gpl_val("Number of Realloc. Candidate Logical Sectors")
+    uncorr = gpl_val("Number of Reported Uncorrectable Errors")
+    if uncorr is None:
+        uncorr = attr_raw("Reported_Uncorrect")
+    temp = attr_raw("Temperature_Celsius")
+    if temp is None:
+        m = re.search(r"Current Temperature:\s+(\d+)\s+Celsius", out)
+        temp = int(m.group(1)) if m else None
+    return health, hours, realloc, pend, uncorr, temp
+
+for idx, bay_id in enumerate(sys.argv[1:], 1):
+    bay = f"Bay {idx}"
+    link = f"/dev/disk/by-path/{bay_id}"
+    if not os.path.islink(link):
+        print(f"{bay:<7} {'[EMPTY]':<9} {'-':<15} {'-':>7} {'-':>7} {'-':>5} {'-':>6} {'-':>4} {RED}NO DISK{NC}")
+        failed_bays.append(bay)
+        continue
+    dev = os.path.basename(os.path.realpath(link))
+    dev_path = f"/dev/{dev}"
+    try:
+        model = open(f"/sys/block/{dev}/device/model").read().strip()
+    except Exception:
+        model = "-"
+    if model.startswith("WDC "):
+        model = model[4:].strip()
+    model = model[:15]
+
+    health, hours, realloc, pend, uncorr, temp = parse_smart(dev_path)
+    h_s = f"{hours}h" if hours is not None else "-"
+    r_s = str(realloc) if realloc is not None else "-"
+    p_s = str(pend) if pend is not None else "-"
+    u_s = str(uncorr) if uncorr is not None else "-"
+    t_s = f"{temp}C" if temp is not None else "-"
+
+    r_v = realloc or 0
+    p_v = pend or 0
+    u_v = uncorr or 0
+    if health == "FAILED" or p_v > 0:
+        st, col = "FAILED", RED
+        failed_bays.append(bay)
+    elif r_v >= 20 or u_v >= 10:
+        st, col = "WATCH", YELLOW
+        watch_bays.append(bay)
+    else:
+        st, col = "HEALTHY", GREEN
+
+    print(f"{bay:<7} {dev_path:<9} {model:<15} {h_s:>7} {r_s:>7} {p_s:>5} {u_s:>6} {t_s:>4} {col}{st}{NC}")
+
+print("------------------------------------------------------------------------------")
+if failed_bays:
+    print(f"{RED}STATUS: SMART failure or pending sectors on {', '.join(failed_bays)}.{NC}")
+elif watch_bays:
+    print(f"{YELLOW}STATUS: All drives passing SMART - monitor WATCH bays ({', '.join(watch_bays)}).{NC}")
+else:
+    print(f"{GREEN}STATUS: Healthy - All drives passing SMART checks.{NC}")
+print("------------------------------------------------------------------------------")
+print("To view array and volume status, run: status -a")
+print("")
+PYEOF
+    exit 0
+fi
 
 echo -e "${BOLD}            TeraStation TS5800D - Disk Map and Health Diagnostics${NC}"
 echo ""
