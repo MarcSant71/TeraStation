@@ -309,9 +309,10 @@ init_storage() {
     fi
     step_ok
 
-    echo -e "\n${CYAN}==============================================================================${NC}"
-    echo -e "${GREEN}${BOLD}     STORAGE INITIALIZED SUCCESSFULLY! NEW RAID-5 VOLUME READY                 ${NC}"
-    echo -e "${CYAN}==============================================================================${NC}"
+    echo ""
+    echo -e "${GREEN}---------------------------------[ COMPLETE ]---------------------------------${NC}"
+    echo -e "${GREEN}${BOLD}  STORAGE INITIALIZED SUCCESSFULLY! NEW RAID-5 VOLUME READY${NC}"
+    echo "------------------------------------------------------------------------------"
     echo -e "Checking updated system status...\n"
 
     status
@@ -362,17 +363,16 @@ if [ $# -eq 0 ]; then
         echo -e "${YELLOW}Auto-detected failed disk: ${BOLD}$AUTO_FAILED_DISK${NC}"
         TARGET_DEV="$AUTO_FAILED_DEV"
     else
-        echo -e "${CYAN}==============================================================================${NC}"
-        echo -e "${BOLD}       TeraStation TS5800D - Disk Replacement & Rebuild Tool                    ${NC}"
-        echo -e "${CYAN}==============================================================================${NC}"
-        echo -e "Usage:"
+        echo -e "${BOLD}             TeraStation TS5800D - Disk Replacement & Rebuild Tool${NC}"
+        echo ""
+        echo -e "${CYAN}----------------------------------[ USAGE ]-----------------------------------${NC}"
         echo -e "  ${BOLD}rebuild${NC}                  Auto-detect and rebuild the failed disk"
         echo -e "  ${BOLD}rebuild <1-8>${NC}            Rebuild by physical bay number (e.g. ${GREEN}rebuild 1${NC})"
         echo -e "  ${BOLD}rebuild <device>${NC}         Rebuild by device name (e.g. ${GREEN}rebuild /dev/sdb${NC})"
         echo -e "  ${BOLD}rebuild --init-storage${NC}   Disaster recovery (recreates RAID-5 /dev/md2 and iSCSI target)"
-        echo -e ""
+        echo "------------------------------------------------------------------------------"
         echo -e "To view current disk map and health diagnostics, run: ${GREEN}${BOLD}status${NC}"
-        echo -e "${CYAN}==============================================================================${NC}"
+        echo "------------------------------------------------------------------------------"
         exit 0
     fi
 elif [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
@@ -441,9 +441,8 @@ if grep -q -E "(^|[[:space:]])${CLEAN_DEV}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdst
     exit 1
 fi
 
-echo -e "\n${CYAN}==========================================================${NC}"
-echo -e "${YELLOW}${BOLD}              WARNING - DISK REBUILD PROCESS              ${NC}"
-echo -e "${CYAN}==========================================================${NC}"
+echo ""
+echo -e "${YELLOW}-------------------------[ WARNING - DISK REBUILD ]---------------------------${NC}"
 echo -e "  Target Disk : ${BOLD}$TARGET_DISK${NC}"
 echo -e "  Model       : $TARGET_MODEL"
 echo -e "  Serial      : $TARGET_SERIAL"
@@ -467,7 +466,7 @@ if [ -z "$SOURCE_DISK" ]; then
     exit 1
 fi
 
-echo -e "${CYAN}==========================================================${NC}"
+echo "------------------------------------------------------------------------------"
 echo -e "${YELLOW}All current data on ${RED}${BOLD}$TARGET_DISK${NC}${YELLOW} will be completely erased.${NC}"
 read -p "Do you want to proceed with rebuilding $TARGET_DISK? [y/N]: " CONFIRM
 CONFIRM=$(echo "$CONFIRM" | tr '[:upper:]' '[:lower:]')
@@ -545,9 +544,10 @@ if [ "$(cat /sys/block/md2/md/sync_action 2>/dev/null)" == "resync" ]; then
 fi
 step_ok
 
-echo -e "\n${CYAN}==============================================================================${NC}"
-echo -e "${GREEN}${BOLD}       PROCESS COMPLETED! DISK RE-INTEGRATED SUCCESSFULLY                       ${NC}"
-echo -e "${CYAN}==============================================================================${NC}"
+echo ""
+echo -e "${GREEN}---------------------------------[ COMPLETE ]---------------------------------${NC}"
+echo -e "${GREEN}${BOLD}  PROCESS COMPLETED! DISK RE-INTEGRATED SUCCESSFULLY${NC}"
+echo "------------------------------------------------------------------------------"
 echo -e "Checking updated system status...\n"
 
 status
