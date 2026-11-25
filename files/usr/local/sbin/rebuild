@@ -363,6 +363,9 @@ if [ $# -eq 0 ]; then
         echo -e "${YELLOW}Auto-detected failed disk: ${BOLD}$AUTO_FAILED_DISK${NC}"
         TARGET_DEV="$AUTO_FAILED_DEV"
     else
+        if [ -t 1 ]; then
+            clear
+        fi
         echo -e "${BOLD}             TeraStation TS5800D - Disk Replacement & Rebuild Tool${NC}"
         echo ""
         echo -e "${CYAN}----------------------------------[ USAGE ]-----------------------------------${NC}"
@@ -441,7 +444,9 @@ if grep -q -E "(^|[[:space:]])${CLEAN_DEV}2\[[0-9]+\]([[:space:]]|$)" <<< "$mdst
     exit 1
 fi
 
-echo ""
+if [ -t 1 ]; then
+    clear
+fi
 echo -e "${YELLOW}-------------------------[ WARNING - DISK REBUILD ]---------------------------${NC}"
 echo -e "  Target Disk : ${BOLD}$TARGET_DISK${NC}"
 echo -e "  Model       : $TARGET_MODEL"
