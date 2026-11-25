@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# TeraStation TS5800D - Safely clear system, kernel, and rotated text logs.
+set -euo pipefail
+
+if [ "$EUID" -ne 0 ]; then
+    echo "ERROR: This script must be run as root (use: sudo clearlogs)" >&2
+    exit 1
+fi
+
+echo "Clearing systemd journal..."
+journalctl --rotate >/dev/null 2>&1 || true
+journalctl --vacuum-time=1s >/dev/null 2>&1 || true
+
+echo "Clearing kernel ring buffer (dmesg)..."
+dmesg -C
+
+echo "Removing rotated log archives and truncating active .log files..."
+find /var/log -type f \( -name "*.gz" -o -name "*.[0-9]" \) -delete
+find /var/log -type f -name "*.log" -exec truncate -s 0 {} +
+
+echo "Done. All logs cleared safely."

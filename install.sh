@@ -50,10 +50,12 @@ mkdir -p /usr/local/sbin /usr/local/bin/micon_scripts
 
 cp -a "${FILES_DIR}/usr/local/sbin/status" /usr/local/sbin/status
 cp -a "${FILES_DIR}/usr/local/sbin/rebuild" /usr/local/sbin/rebuild
-chmod 755 /usr/local/sbin/status /usr/local/sbin/rebuild
+cp -a "${FILES_DIR}/usr/local/sbin/clearlogs" /usr/local/sbin/clearlogs
+chmod 755 /usr/local/sbin/status /usr/local/sbin/rebuild /usr/local/sbin/clearlogs
 
 ln -sf /usr/local/sbin/status /usr/local/bin/status
 ln -sf /usr/local/sbin/rebuild /usr/local/bin/rebuild
+ln -sf /usr/local/sbin/clearlogs /usr/local/bin/clearlogs
 
 # Scripts micon (LCD, Beeper, Monitor, Power)
 cp -a "${FILES_DIR}/usr/local/bin/micon_scripts/"* /usr/local/bin/micon_scripts/
