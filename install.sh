@@ -57,6 +57,14 @@ ln -sf /usr/local/sbin/status /usr/local/bin/status
 ln -sf /usr/local/sbin/rebuild /usr/local/bin/rebuild
 ln -sf /usr/local/sbin/clearlogs /usr/local/bin/clearlogs
 
+# Manpages (status, rebuild)
+if [ -d "${FILES_DIR}/usr/local/share/man/man8" ]; then
+    mkdir -p /usr/local/share/man/man8
+    cp -a "${FILES_DIR}/usr/local/share/man/man8/"*.8 /usr/local/share/man/man8/
+    chmod 644 /usr/local/share/man/man8/*.8
+    mandb -q 2>/dev/null || true
+fi
+
 # Scripts micon (LCD, Beeper, Monitor, Power)
 cp -a "${FILES_DIR}/usr/local/bin/micon_scripts/"* /usr/local/bin/micon_scripts/
 chmod 755 /usr/local/bin/micon_scripts/*.py 2>/dev/null || true

@@ -1,0 +1,48 @@
+.TH REBUILD 8 "November 2026" "TeraStation TS5800D" "System Administration"
+.SH NAME
+rebuild \- replace failed drives and recover RAID arrays on TeraStation TS5800D
+.SH SYNOPSIS
+.B rebuild
+[\fI1\-8\fR | \fI/dev/sdX\fR | \fB\-\-init\-storage\fR | \fB\-h\fR]
+.SH DESCRIPTION
+.B rebuild
+is an assisted disk replacement and disaster recovery tool for the Buffalo TeraStation
+TS5800D. It automatically elevates to root via
+.BR sudo (8),
+clones the GPT partition layout from a healthy active member, re-integrates OS mirrors
+.RI ( /dev/md0 ", " /dev/md1 ),
+installs GRUB on the replacement disk, and queues RAID-5 data recovery
+.RI ( /dev/md2 ).
+.SH OPTIONS
+.TP
+.B (no arguments)
+If a single failed or missing disk is detected, prompts to rebuild it automatically;
+otherwise displays usage summary.
+.TP
+.I 1\-8
+Rebuild the specified physical chassis bay number (e.g.,
+.BR "rebuild 2" ).
+.TP
+.I /dev/sdX
+Rebuild the specified kernel block device (e.g.,
+.BR "rebuild /dev/sdb" ).
+.TP
+.B \-\-init\-storage
+Disaster recovery mode. Wipes and recreates GPT partitions, OS mirrors
+.RI ( md0 ", " md1 ),
+RAID-5 storage array
+.RI ( md2 ),
+.IR /etc/mdadm/mdadm.conf ,
+and GRUB across all 8 disks. Requires typing
+.B INITIALIZE
+to confirm.
+.TP
+.BR \-h ", " \-\-help
+Show brief usage summary and exit.
+.SH SAFEGUARDS
+Refuses to overwrite healthy online members or drives currently rebuilding.
+.SH SEE ALSO
+.BR status (8),
+.BR mdadm (8)
+.SH AUTHOR
+Marcelo Santos \- ActionSys

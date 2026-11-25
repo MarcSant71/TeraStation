@@ -1,0 +1,47 @@
+.TH STATUS 8 "November 2026" "TeraStation TS5800D" "System Administration"
+.SH NAME
+status \- display physical bay map, RAID volume status, and SMART disk health
+.SH SYNOPSIS
+.B status
+[\fB\-a\fR | \fB\-d\fR | \fB\-h\fR]
+.SH DESCRIPTION
+.B status
+is a read-only diagnostic utility for the Buffalo TeraStation TS5800D running Debian 12.
+It maps physical chassis bays (Bay 1..8) to Linux block devices and reports real-time
+MDADM RAID health or extended SMART diagnostics.
+.SH OPTIONS
+.TP
+.B \-a
+Display physical bay mapping, disk status, and MDADM RAID volumes
+.RI ( /dev/md0 ,
+.IR /dev/md1 ,
+.IR /dev/md2 ).
+This is the default mode when no option is provided.
+.TP
+.B \-d
+Display detailed SMART disk health per bay using
+.BR smartctl (8)
+(power-on hours, reallocated sectors, pending sectors, uncorrectable errors, and temperature).
+Automatically elevates with
+.BR sudo (8)
+when invoked as a non-root user.
+.TP
+.BR \-h ", " \-\-help
+Show brief usage summary and exit.
+.SH STATUS VALUES (\-d)
+.TP
+.B HEALTHY
+SMART self-assessment passed with no pending sectors and low/zero wear.
+.TP
+.B WATCH
+SMART passed and zero pending sectors, but historical reallocated sectors (>= 20)
+or reported uncorrectable errors (>= 10) warrant periodic observation.
+.TP
+.B FAILED
+SMART self-assessment failed or pending sectors (> 0) detected.
+.SH SEE ALSO
+.BR rebuild (8),
+.BR smartctl (8),
+.BR mdadm (8)
+.SH AUTHOR
+Marcelo Santos \- ActionSys
