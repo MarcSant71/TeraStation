@@ -45,6 +45,10 @@ clear_varlog() {
     find /var/log -type f -name "*.log" -exec truncate -s 0 {} +
 }
 
+if [ -t 1 ]; then
+    clear
+fi
+
 echo -e "${BOLD}                  TeraStation TS5800D - System Log Cleanup${NC}"
 echo ""
 echo -e "${CYAN}---------------------------------[ CLEANUP ]----------------------------------${NC}"
