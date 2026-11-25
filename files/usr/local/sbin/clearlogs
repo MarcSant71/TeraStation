@@ -1,21 +1,60 @@
 #!/usr/bin/env bash
-# TeraStation TS5800D - Safely clear system, kernel, and rotated text logs.
-set -euo pipefail
+# ==============================================================================
+# TeraStation TS5800D - Log Cleanup Utility
+# Safely clears systemd journal, kernel ring buffer, and /var/log text files.
+# ==============================================================================
 
-if [ "$EUID" -ne 0 ]; then
-    echo "ERROR: This script must be run as root (use: sudo clearlogs)" >&2
-    exit 1
+set -euo pipefail
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+CYAN='\033[1;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Auto-elevate to sudo if executed as standard user
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo "$0" "$@"
 fi
 
-echo "Clearing systemd journal..."
-journalctl --rotate >/dev/null 2>&1 || true
-journalctl --vacuum-time=1s >/dev/null 2>&1 || true
+run_step() {
+    local msg="$1"
+    shift
+    local pad=$((69 - ${#msg}))
+    [ "$pad" -lt 3 ] && pad=3
+    local dots
+    dots=$(printf '%*s' "$pad" '' | tr ' ' '.')
 
-echo "Clearing kernel ring buffer (dmesg)..."
-dmesg -C
+    printf "%s %s " "$msg" "$dots"
+    if "$@" >/dev/null 2>&1; then
+        echo -e "[ ${GREEN}OK${NC} ]"
+    else
+        echo -e "[${RED}FAIL${NC}]"
+        return 1
+    fi
+}
 
-echo "Removing rotated log archives and truncating active .log files..."
-find /var/log -type f \( -name "*.gz" -o -name "*.[0-9]" \) -delete
-find /var/log -type f -name "*.log" -exec truncate -s 0 {} +
+clear_journal() {
+    journalctl --rotate
+    journalctl --vacuum-time=1s
+}
 
-echo "Done. All logs cleared safely."
+clear_varlog() {
+    find /var/log -type f \( -name "*.gz" -o -name "*.[0-9]" \) -delete
+    find /var/log -type f -name "*.log" -exec truncate -s 0 {} +
+}
+
+echo -e "${CYAN}==============================================================================${NC}"
+echo -e "${BOLD}  TeraStation TS5800D - System Log Cleanup                                    ${NC}"
+echo -e "${CYAN}==============================================================================${NC}"
+echo ""
+
+run_step "[1/3] Systemd journal (rotate & vacuum)" clear_journal
+run_step "[2/3] Kernel ring buffer (dmesg)" dmesg -C
+run_step "[3/3] Rotated archives and active .log files" clear_varlog
+
+echo ""
+echo -e "${CYAN}==============================================================================${NC}"
+echo -e "${GREEN}${BOLD}  ALL LOGS CLEARED SAFELY                                                    ${NC}"
+echo -e "${CYAN}==============================================================================${NC}"
