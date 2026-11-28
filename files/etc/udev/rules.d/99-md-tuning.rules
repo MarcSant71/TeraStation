@@ -3,3 +3,5 @@ ACTION=="add|change", KERNEL=="md2", TEST=="md/stripe_cache_size", ATTR{md/strip
 ACTION=="add|change", KERNEL=="md2", TEST=="queue/read_ahead_kb", ATTR{queue/read_ahead_kb}="14336"
 # Automatically switch degraded arrays with a rebuilding spare out of read-auto on boot
 ACTION=="add|change", KERNEL=="md[0-9]*", ATTR{md/array_state}=="read-auto", ATTR{md/degraded}!="0", RUN+="/bin/sh -c 'grep -q spare /sys/block/%k/md/dev-*/state 2>/dev/null && /sbin/mdadm --readwrite /dev/%k || true'"
+# Enable volatile disk write cache on SATA drives (unifies OEM HPE/Hitachi firmware defaults)
+ACTION=="add", KERNEL=="sd[a-z]", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", RUN+="/usr/sbin/smartctl -s wcache,on /dev/%k"
